@@ -2,6 +2,15 @@
 
 A comprehensive platform for running federated learning projects across multiple devices while preserving data privacy.
 
+## Screenshots
+
+Here are a few snapshots of the platform in action:
+
+![Screenshot 1](images/ss1.png)
+![Screenshot 2](images/ss2.png)
+![Screenshot 3](images/ss3.png)
+![Screenshot 4](images/ss4.png)
+![Screenshot 5](images/ss5.png)
 ## Features
 
 - **Privacy Preserving Learning**: Train machine learning models without sharing raw data
@@ -95,7 +104,7 @@ pip install requests
 
 2. Run the federated client with your API key:
 ```bash
-python federated_client.py --server http://your-server-url:5000 --api_key your-api-key
+python -m fl_client.run_client --client_id client1_saurabh --api_key API_KEY    --server_url http://localhost:5000 --batch_size 32  --epochs 5     --data_split 0.5
 ```
 
 3. Command line options:
