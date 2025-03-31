@@ -1,0 +1,8 @@
+=== Database Initialization Complete ===
+Admin user created: admin@example.com
+Organization created: Federated Learning Admin
+API Key: 7039844b0472d0c6bdf1d4db1c6aa5d46c8be09bf872b6d9
+
+IMPORTANT: Save this API key as it will not be shown again!
+
+You can now run the application with: python run.py

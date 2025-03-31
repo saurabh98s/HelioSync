@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Federated Learning Platform - Privacy-Preserving Machine Learning{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center mb-5">
+        <div class="col-lg-10 text-center">
+            <h1 class="display-4 fw-bold text-primary mb-4">Privacy-Preserving Machine Learning</h1>
+            <p class="lead fs-4 mb-5">Train powerful machine learning models across multiple devices and organizations while keeping data private and secure.</p>
+            
+            <div class="d-grid gap-3 d-sm-flex justify-content-center">
+                {% if current_user.is_authenticated %}
+                    <a href="{{ url_for('dashboard.index') }}" class="btn btn-primary btn-lg px-5 py-3">
+                        <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                    </a>
+                    <a href="{{ url_for('projects.index') }}" class="btn btn-outline-primary btn-lg px-5 py-3">
+                        <i class="fas fa-project-diagram me-2"></i>View Projects
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg px-5 py-3">
+                        <i class="fas fa-user-plus me-2"></i>Get Started
+                    </a>
+                    <a href="{{ url_for('auth.login') }}" class="btn btn-outline-primary btn-lg px-5 py-3">
+                        <i class="fas fa-sign-in-alt me-2"></i>Sign In
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-5 pt-4">
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body text-center p-4">
+                    <div class="feature-icon bg-primary bg-gradient text-white rounded-circle mb-3 p-3 d-inline-flex">
+                        <i class="fas fa-shield-alt fa-2x"></i>
+                    </div>
+                    <h3 class="fs-4 fw-bold">Privacy First</h3>
+                    <p class="card-text">Train models without sharing sensitive data. Data stays on the original device, preserving privacy and security.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body text-center p-4">
+                    <div class="feature-icon bg-primary bg-gradient text-white rounded-circle mb-3 p-3 d-inline-flex">
+                        <i class="fas fa-brain fa-2x"></i>
+                    </div>
+                    <h3 class="fs-4 fw-bold">Advanced ML</h3>
+                    <p class="card-text">Support for TensorFlow and PyTorch frameworks. Train sophisticated models with multiple data sources.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mb-4">
+            <div class="card h-100 border-0 shadow-sm">
+                <div class="card-body text-center p-4">
+                    <div class="feature-icon bg-primary bg-gradient text-white rounded-circle mb-3 p-3 d-inline-flex">
+                        <i class="fas fa-chart-line fa-2x"></i>
+                    </div>
+                    <h3 class="fs-4 fw-bold">Real-time Metrics</h3>
+                    <p class="card-text">Monitor training progress, model performance, and client participation in real time.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-5 pt-3">
+        <div class="col-12 text-center">
+            <h2 class="fs-1 fw-bold mb-5">Ready to get started?</h2>
+            {% if current_user.is_authenticated %}
+                <a href="{{ url_for('projects.create') }}" class="btn btn-lg btn-success">
+                    <i class="fas fa-plus-circle me-2"></i>Create New Project
+                </a>
+            {% else %}
+                <a href="{{ url_for('auth.register') }}" class="btn btn-lg btn-success">
+                    <i class="fas fa-user-plus me-2"></i>Sign Up Now
+                </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .feature-icon {
+        width: 60px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+</style>
+{% endblock %} 

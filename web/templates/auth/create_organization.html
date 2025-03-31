@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Create Organization - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-7">
+            <div class="card shadow">
+                <div class="card-header bg-primary text-white text-center py-3">
+                    <h4 class="mb-0"><i class="fas fa-building me-2"></i>Create Organization</h4>
+                </div>
+                <div class="card-body p-4">
+                    <div class="alert alert-info mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Create an organization to start managing federated learning projects. You'll be automatically assigned as the organization administrator.
+                    </div>
+                    
+                    <form method="POST" action="{{ url_for('auth.create_org') }}">
+                        {{ form.csrf_token }}
+                        
+                        <div class="mb-3">
+                            {{ form.name.label(class="form-label") }}
+                            {% if form.name.errors %}
+                                {{ form.name(class="form-control is-invalid") }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.name.errors %}
+                                        {{ error }}
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.name(class="form-control", placeholder="Enter organization name") }}
+                            {% endif %}
+                            <div class="form-text">
+                                Choose a unique name for your organization (3-120 characters).
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            {{ form.description.label(class="form-label") }}
+                            {% if form.description.errors %}
+                                {{ form.description(class="form-control is-invalid", rows=4) }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.description.errors %}
+                                        {{ error }}
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.description(class="form-control", rows=4, placeholder="Describe your organization (optional)") }}
+                            {% endif %}
+                            <div class="form-text">
+                                Maximum 500 characters.
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid">
+                            {{ form.submit(class="btn btn-primary btn-lg") }}
+                        </div>
+                    </form>
+                    
+                    <div class="mt-4">
+                        <div class="card bg-light">
+                            <div class="card-body">
+                                <h5 class="card-title">What happens next?</h5>
+                                <ol class="mb-0">
+                                    <li>After creating your organization, you'll receive an <strong>API key</strong> that clients will use to connect.</li>
+                                    <li>You can then create projects and monitor connected clients.</li>
+                                    <li>As an administrator, you can invite other users to join your organization.</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

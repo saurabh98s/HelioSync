@@ -1,0 +1,45 @@
+# Flask and Extensions
+Flask==2.2.3
+Flask-Login==0.6.2
+Flask-Migrate==4.0.4
+Flask-SQLAlchemy==3.0.3
+Flask-WTF==1.1.1
+Flask-Session==0.5.0
+Flask-RESTful==0.3.10
+Flask-CORS==4.0.0
+Werkzeug==2.2.3
+itsdangerous==2.1.2
+Jinja2==3.1.2
+WTForms==3.0.1
+SQLAlchemy==2.0.16
+email-validator==2.0.0
+
+# Database
+psycopg2-binary==2.9.6  # For PostgreSQL
+mysqlclient==2.1.1  # For MySQL
+
+# Machine Learning
+numpy==1.23.5
+tensorflow==2.12.0
+torch==2.0.1
+scikit-learn==1.2.2
+pandas==2.0.2
+
+# Utilities
+python-dotenv==1.0.0
+click==8.1.3
+gunicorn==20.1.0
+jsonschema==4.17.3
+pyyaml==6.0
+requests==2.31.0
+validators==0.20.0
+python-dateutil==2.8.2
+pytz==2023.3
+apscheduler==3.10.1
+colorama==0.4.6
+
+# Development tools
+pytest==7.3.1
+pytest-flask==1.2.0
+flake8==6.0.0
+black==23.3.0 
