@@ -1,6 +1,6 @@
-# Federated Learning Platform
+# HelioSync (A Federated Learning Platform)
 
-A comprehensive platform for running federated learning projects across multiple devices while preserving data privacy.
+Presenting HelioSync, a comprehensive platform for running federated learning projects across multiple devices while preserving data privacy.
 
 ## Screenshots
 
