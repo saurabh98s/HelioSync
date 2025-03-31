@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block title %}Clients - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">Client Management</h1>
+                <div>
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#clientInstructionsModal">
+                        <i class="fas fa-info-circle me-2"></i>Client Instructions
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Clients Card -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Connected Clients</h6>
+                </div>
+                <div class="card-body">
+                    {% if clients %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Client ID</th>
+                                        <th>Status</th>
+                                        <th>IP Address</th>
+                                        <th>Device Info</th>
+                                        <th>Last Heartbeat</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for client in clients %}
+                                        <tr>
+                                            <td>{{ client.name }}</td>
+                                            <td><code>{{ client.client_id }}</code></td>
+                                            <td>
+                                                {% if client.is_connected %}
+                                                    <span class="badge bg-success">Connected</span>
+                                                {% else %}
+                                                    <span class="badge bg-secondary">Offline</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>{{ client.ip_address or 'N/A' }}</td>
+                                            <td>{{ client.device_info or 'N/A' }}</td>
+                                            <td>
+                                                {% if client.last_heartbeat %}
+                                                    {{ client.last_heartbeat|formatdatetime('%Y-%m-%d %H:%M:%S') }}
+                                                {% else %}
+                                                    Never
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                <a href="{{ url_for('dashboard.client_detail', client_id=client.client_id) }}" class="btn btn-sm btn-primary">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-5">
+                            <i class="fas fa-laptop fa-4x text-gray-300 mb-3"></i>
+                            <h5>No Clients Connected</h5>
+                            <p class="text-muted">Use the API key from your organization to connect clients to the platform.</p>
+                            <button type="button" class="btn btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#clientInstructionsModal">
+                                <i class="fas fa-info-circle me-2"></i>View Instructions
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- API Key Alert -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">API Keys</h6>
+                </div>
+                <div class="card-body">
+                    <p>
+                        Clients connect to the platform using your organization's API key. You can view and manage API keys 
+                        in the <a href="{{ url_for('dashboard.organization') }}">Organization</a> page.
+                    </p>
+                    
+                    {% for api_key in organization.api_keys %}
+                        {% if api_key.is_valid() %}
+                            <div class="alert alert-success">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong>Active API Key:</strong> 
+                                        <code>{{ api_key.key[:8] }}...{{ api_key.key[-8:] }}</code>
+                                        <div class="small text-muted">
+                                            Created: {{ api_key.created_at|formatdatetime('%Y-%m-%d') }}
+                                            {% if api_key.expires_at %}
+                                                | Expires: {{ api_key.expires_at|formatdatetime('%Y-%m-%d') }}
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <a href="{{ url_for('dashboard.organization') }}" class="btn btn-sm btn-primary">
+                                        Manage Keys
+                                    </a>
+                                </div>
+                            </div>
+                            {% if loop.first %}{% endif %}
+                        {% endif %}
+                    {% else %}
+                        <div class="alert alert-warning">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>No active API keys found!</strong> 
+                                    <div class="small">
+                                        You need to create an API key for clients to connect.
+                                    </div>
+                                </div>
+                                <a href="{{ url_for('dashboard.organization') }}" class="btn btn-sm btn-warning">
+                                    Create API Key
+                                </a>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Client Instructions Modal -->
+<div class="modal fade" id="clientInstructionsModal" tabindex="-1" aria-labelledby="clientInstructionsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="clientInstructionsModalLabel">Client Connection Instructions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <h5>1. Install the Federated Learning Client</h5>
+                <div class="bg-light p-3 mb-3">
+                    <code>pip install federated-learning-client</code>
+                </div>
+                
+                <h5>2. Initialize Client Configuration</h5>
+                <div class="bg-light p-3 mb-3">
+                    <pre><code>from fl_client import FederatedClient
+
+# Create a client instance
+client = FederatedClient(
+    server_url="http://{{ request.host }}",
+    api_key="YOUR_API_KEY",
+    client_name="My Client Name"
+)</code></pre>
+                </div>
+                
+                <h5>3. Start the Client</h5>
+                <div class="bg-light p-3 mb-3">
+                    <pre><code># Start the client connection
+client.start()
+
+# Wait for training tasks
+client.wait_for_tasks()</code></pre>
+                </div>
+                
+                <h5>4. Example Client Script</h5>
+                <div class="bg-light p-3 mb-3">
+                    <pre><code>import os
+import time
+from fl_client import FederatedClient
+
+# Get API key from environment variable
+API_KEY = os.environ.get("FL_API_KEY", "YOUR_API_KEY")
+
+# Create client
+client = FederatedClient(
+    server_url="http://{{ request.host }}",
+    api_key=API_KEY,
+    client_name="Client-" + os.environ.get("HOSTNAME", "Unknown")
+)
+
+# Connect to server
+client.start()
+
+try:
+    # Wait for training tasks
+    while True:
+        client.check_for_tasks()
+        time.sleep(5)
+except KeyboardInterrupt:
+    print("Stopping client...")
+finally:
+    client.stop()</code></pre>
+                </div>
+                
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Note:</strong> Replace <code>YOUR_API_KEY</code> with the API key from the Organization page.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    pre {
+        margin-bottom: 0;
+    }
+</style>
+{% endblock %} 

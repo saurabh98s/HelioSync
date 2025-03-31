@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}Create Project - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <a href="{{ url_for('projects.index') }}" class="btn btn-outline-primary mb-2">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Projects
+                    </a>
+                    <h1 class="h2">Create Project</h1>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Project Details</h6>
+                        </div>
+                        <div class="card-body">
+                            <form method="POST" action="{{ url_for('projects.create') }}" class="needs-validation" novalidate>
+                                {{ form.csrf_token }}
+                                
+                                <div class="mb-3">
+                                    {{ form.name.label(class="form-label") }}
+                                    {% if form.name.errors %}
+                                        {{ form.name(class="form-control is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.name.errors %}
+                                                {{ error }}
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        {{ form.name(class="form-control", placeholder="Enter project name") }}
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="mb-3">
+                                    {{ form.description.label(class="form-label") }}
+                                    {% if form.description.errors %}
+                                        {{ form.description(class="form-control is-invalid", rows=4) }}
+                                        <div class="invalid-feedback">
+                                            {% for error in form.description.errors %}
+                                                {{ error }}
+                                            {% endfor %}
+                                        </div>
+                                    {% else %}
+                                        {{ form.description(class="form-control", rows=4, placeholder="Describe your project (optional)") }}
+                                    {% endif %}
+                                </div>
+                                
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        {{ form.dataset_name.label(class="form-label") }}
+                                        {% if form.dataset_name.errors %}
+                                            {{ form.dataset_name(class="form-select is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.dataset_name.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            {{ form.dataset_name(class="form-control") }}
+                                            <div class="form-text">
+                                                Enter the name of your dataset (e.g. MNIST, CIFAR-10)
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        {{ form.framework.label(class="form-label") }}
+                                        {% if form.framework.errors %}
+                                            {{ form.framework(class="form-select is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.framework.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            {{ form.framework(class="form-select") }}
+                                            <div class="form-text">
+                                                Select the machine learning framework you'll use
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <div class="row mb-4">
+                                    <div class="col-md-6">
+                                        {{ form.min_clients.label(class="form-label") }}
+                                        {% if form.min_clients.errors %}
+                                            {{ form.min_clients(class="form-control is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.min_clients.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            {{ form.min_clients(class="form-control") }}
+                                            <div class="form-text">
+                                                Minimum number of clients required to start training
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                    
+                                    <div class="col-md-6">
+                                        {{ form.rounds.label(class="form-label") }}
+                                        {% if form.rounds.errors %}
+                                            {{ form.rounds(class="form-control is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in form.rounds.errors %}
+                                                    {{ error }}
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            {{ form.rounds(class="form-control") }}
+                                            <div class="form-text">
+                                                Number of federated learning rounds to perform
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <div class="d-grid gap-2">
+                                    {{ form.submit(class="btn btn-primary btn-lg") }}
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-lg-4">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <h5 class="card-title">Framework Details</h5>
+                            <div class="accordion" id="frameworkInfo">
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header" id="headingTF">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTF" aria-expanded="false" aria-controls="collapseTF">
+                                            TensorFlow
+                                        </button>
+                                    </h2>
+                                    <div id="collapseTF" class="accordion-collapse collapse" aria-labelledby="headingTF" data-bs-parent="#frameworkInfo">
+                                        <div class="accordion-body">
+                                            <strong>TensorFlow</strong> is an open-source machine learning framework developed by Google. It's well-suited for deep learning models like CNNs and RNNs.
+                                            <ul class="mt-2">
+                                                <li>Uses Keras API for model definition</li>
+                                                <li>Good for image & text classification</li>
+                                                <li>Requires TensorFlow on clients</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header" id="headingPT">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapsePT" aria-expanded="false" aria-controls="collapsePT">
+                                            PyTorch
+                                        </button>
+                                    </h2>
+                                    <div id="collapsePT" class="accordion-collapse collapse" aria-labelledby="headingPT" data-bs-parent="#frameworkInfo">
+                                        <div class="accordion-body">
+                                            <strong>PyTorch</strong> is an open-source machine learning framework developed by Facebook's AI Research lab. It's known for its dynamic computation graph.
+                                            <ul class="mt-2">
+                                                <li>Flexible model definition</li>
+                                                <li>Good for research & experimentation</li>
+                                                <li>Requires PyTorch on clients</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header" id="headingSK">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSK" aria-expanded="false" aria-controls="collapseSK">
+                                            Scikit-Learn
+                                        </button>
+                                    </h2>
+                                    <div id="collapseSK" class="accordion-collapse collapse" aria-labelledby="headingSK" data-bs-parent="#frameworkInfo">
+                                        <div class="accordion-body">
+                                            <strong>Scikit-Learn</strong> is a simple and efficient tool for data mining and data analysis. It's built on NumPy, SciPy, and matplotlib.
+                                            <ul class="mt-2">
+                                                <li>Simpler traditional ML models</li>
+                                                <li>Good for regression & classification</li>
+                                                <li>Smaller memory footprint</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <hr>
+                            
+                            <h5 class="card-title mt-4">Training Process</h5>
+                            <p>After creating your project:</p>
+                            <ol>
+                                <li>Connect the minimum number of clients</li>
+                                <li>Start the training process from the project dashboard</li>
+                                <li>Monitor progress as training occurs across clients</li>
+                                <li>Deploy the final model when training completes</li>
+                            </ol>
+                            
+                            <div class="alert alert-info mt-3">
+                                <i class="fas fa-info-circle me-2"></i>
+                                Clients will need to use the organization's API key to connect to the platform.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+</style>
+{% endblock %} 

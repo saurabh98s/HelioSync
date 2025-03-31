@@ -125,6 +125,130 @@ def client_heartbeat(client_id):
         current_app.logger.error(f"Error updating client heartbeat: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@api_bp.route('/client/heartbeat', methods=['POST'])
+@require_api_key
+def client_heartbeat_endpoint():
+    """Alias for client heartbeat - used by clients."""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        client_id = data.get('client_id')
+        
+        if not client_id:
+            return jsonify({"error": "Client ID is required"}), 400
+        
+        client = Client.query.filter_by(
+            client_id=client_id, 
+            organization_id=request.organization.id
+        ).first()
+        
+        if not client:
+            return jsonify({"error": "Client not found"}), 404
+        
+        client.last_heartbeat = datetime.utcnow()
+        client.is_connected = True
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "client_id": client.client_id,
+            "timestamp": client.last_heartbeat.isoformat()
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating client heartbeat: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@api_bp.route('/clients/heartbeat', methods=['POST'])
+@require_api_key
+def clients_heartbeat_endpoint():
+    """Another alias for client heartbeat - used by clients."""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        client_id = data.get('client_id')
+        
+        if not client_id:
+            return jsonify({"error": "Client ID is required"}), 400
+        
+        client = Client.query.filter_by(
+            client_id=client_id, 
+            organization_id=request.organization.id
+        ).first()
+        
+        if not client:
+            return jsonify({"error": "Client not found"}), 404
+        
+        client.last_heartbeat = datetime.utcnow()
+        client.is_connected = True
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "client_id": client.client_id,
+            "timestamp": client.last_heartbeat.isoformat()
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating client heartbeat: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@api_bp.route('/clients/tasks', methods=['GET'])
+@require_api_key
+def client_tasks():
+    """Get available tasks for a client."""
+    try:
+        client_id = request.args.get('client_id')
+        
+        if not client_id:
+            return jsonify({"error": "Client ID is required"}), 400
+        
+        # Find the client
+        client = Client.query.filter_by(
+            client_id=client_id, 
+            organization_id=request.organization.id
+        ).first()
+        
+        if not client:
+            return jsonify({"error": "Client not found"}), 404
+        
+        # For now, return no tasks
+        # In a real implementation, you would check if there are tasks for this client
+        return jsonify({
+            "success": True,
+            "has_task": False,
+            "client_id": client.client_id
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting client tasks: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Client registration aliases
+@api_bp.route('/client/register', methods=['POST'])
+@require_api_key
+def register_client_alias1():
+    """Alias for register_client endpoint."""
+    return register_client()
+
+@api_bp.route('/clients/register', methods=['POST'])
+@require_api_key
+def register_client_alias2():
+    """Alias for register_client endpoint."""
+    return register_client()
+
+@api_bp.route('/register', methods=['POST'])
+@require_api_key
+def register_client_alias3():
+    """Alias for register_client endpoint."""
+    return register_client()
+
 @api_bp.route('/projects')
 @require_api_key
 def get_projects():

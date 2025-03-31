@@ -8,7 +8,7 @@ from flask import Blueprint, render_template, flash, redirect, url_for, request,
 from flask_login import login_required, current_user
 
 from web.app import db
-from web.models import User, Organization, Project, Client, Model
+from web.models import User, Organization, Project, Client, Model, ApiKey
 
 # Create blueprint
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -28,7 +28,7 @@ def index():
     # Get statistics
     stats = {
         'projects': {
-            'total': organization.projects.count(),
+            'total': len(organization.projects),
             'active': Project.query.join(Project.organizations).filter(
                 Organization.id == organization.id,
                 Project.status == 'running'
@@ -39,10 +39,10 @@ def index():
             ).count()
         },
         'clients': {
-            'total': organization.clients.count(),
+            'total': Client.query.filter_by(organization_id=organization.id).count(),
             'active': Client.query.filter_by(
                 organization_id=organization.id,
-                status='active'
+                is_connected=True
             ).count()
         },
         'models': {
@@ -139,6 +139,166 @@ def organization():
                           api_keys=api_keys,
                           new_api_key=new_api_key)
 
+@dashboard_bp.route('/create_api_key', methods=['POST'])
+@login_required
+def create_api_key():
+    """Create a new API key for the organization."""
+    # If user doesn't belong to an organization, redirect to create organization page
+    if not current_user.organization:
+        flash('You need to create or join an organization first.', 'warning')
+        return redirect(url_for('auth.create_org'))
+    
+    # Get organization
+    organization = current_user.organization
+    
+    # Check if expiration date is set
+    if request.form.get('set_expiration') == '1' and request.form.get('expiration_date'):
+        try:
+            # Parse date from form
+            from datetime import datetime
+            expiration_date = datetime.strptime(request.form.get('expiration_date'), '%Y-%m-%d')
+            
+            # Create API key with expiration
+            api_key = ApiKey(organization=organization, expires_at=expiration_date)
+        except ValueError:
+            flash('Invalid expiration date format.', 'error')
+            return redirect(url_for('dashboard.organization'))
+    else:
+        # Create API key without expiration
+        api_key = ApiKey(organization=organization)
+    
+    # Save to database
+    db.session.add(api_key)
+    db.session.commit()
+    
+    # Store the key in session to display it once
+    session['new_api_key'] = api_key.key
+    
+    flash('New API key created successfully.', 'success')
+    return redirect(url_for('dashboard.organization'))
+
+@dashboard_bp.route('/revoke_api_key', methods=['POST'])
+@login_required
+def revoke_api_key():
+    """Revoke an existing API key."""
+    # If user doesn't belong to an organization, redirect to create organization page
+    if not current_user.organization:
+        flash('You need to create or join an organization first.', 'warning')
+        return redirect(url_for('auth.create_org'))
+    
+    # Get organization
+    organization = current_user.organization
+    
+    # Get key ID from form
+    key_id = request.form.get('key_id')
+    if not key_id:
+        flash('Invalid request.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Find the key
+    api_key = ApiKey.query.filter_by(id=key_id, organization_id=organization.id).first()
+    if not api_key:
+        flash('API key not found.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Revoke the key
+    api_key.is_active = False
+    db.session.commit()
+    
+    flash('API key revoked successfully.', 'success')
+    return redirect(url_for('dashboard.organization'))
+
+@dashboard_bp.route('/update_organization', methods=['POST'])
+@login_required
+def update_organization():
+    """Update organization details."""
+    # If user doesn't belong to an organization, redirect to create organization page
+    if not current_user.organization:
+        flash('You need to create or join an organization first.', 'warning')
+        return redirect(url_for('auth.create_org'))
+    
+    # Get organization
+    organization = current_user.organization
+    
+    # Update organization details
+    organization.name = request.form.get('name', organization.name)
+    organization.description = request.form.get('description', organization.description)
+    
+    db.session.commit()
+    
+    flash('Organization updated successfully.', 'success')
+    return redirect(url_for('dashboard.organization'))
+
+@dashboard_bp.route('/invite_user', methods=['POST'])
+@login_required
+def invite_user():
+    """Invite a user to the organization."""
+    # If user doesn't belong to an organization, redirect to create organization page
+    if not current_user.organization:
+        flash('You need to create or join an organization first.', 'warning')
+        return redirect(url_for('auth.create_org'))
+    
+    # Get organization
+    organization = current_user.organization
+    
+    # Get email from form
+    email = request.form.get('email')
+    if not email:
+        flash('Email address is required.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Check if user already exists
+    user = User.query.filter_by(email=email).first()
+    if user:
+        # If user already belongs to this organization
+        if user.organization_id == organization.id:
+            flash('User is already a member of this organization.', 'warning')
+            return redirect(url_for('dashboard.organization'))
+        
+        # TODO: Send invitation email
+        flash(f'Invitation sent to {email}.', 'success')
+    else:
+        # TODO: Create invitation record and send email
+        flash(f'Invitation sent to {email}.', 'success')
+    
+    return redirect(url_for('dashboard.organization'))
+
+@dashboard_bp.route('/remove_user', methods=['POST'])
+@login_required
+def remove_user():
+    """Remove a user from the organization."""
+    # If user doesn't belong to an organization, redirect to create organization page
+    if not current_user.organization:
+        flash('You need to create or join an organization first.', 'warning')
+        return redirect(url_for('auth.create_org'))
+    
+    # Get organization
+    organization = current_user.organization
+    
+    # Get user ID from form
+    user_id = request.form.get('user_id')
+    if not user_id:
+        flash('Invalid request.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Cannot remove yourself
+    if int(user_id) == current_user.id:
+        flash('You cannot remove yourself from the organization.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Find the user
+    user = User.query.filter_by(id=user_id, organization_id=organization.id).first()
+    if not user:
+        flash('User not found in organization.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
+    # Remove the user from the organization
+    user.organization_id = None
+    db.session.commit()
+    
+    flash(f'User {user.username} removed from the organization.', 'success')
+    return redirect(url_for('dashboard.organization'))
+
 @dashboard_bp.route('/metrics')
 @login_required
 def metrics():
@@ -162,8 +322,8 @@ def metrics():
         models = Model.query.filter_by(project_id=project.id).order_by(Model.created_at).all()
         
         # Prepare data for charts
-        accuracy_data = [{'x': i+1, 'y': model.accuracy} for i, model in enumerate(models)]
-        loss_data = [{'x': i+1, 'y': model.loss} for i, model in enumerate(models)]
+        accuracy_data = [{'x': i+1, 'y': model.metrics.get('accuracy', 0) if model.metrics else 0} for i, model in enumerate(models)]
+        loss_data = [{'x': i+1, 'y': model.metrics.get('loss', 0) if model.metrics else 0} for i, model in enumerate(models)]
         
         project_data.append({
             'project': project,

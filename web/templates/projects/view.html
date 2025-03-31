@@ -1,0 +1,563 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <a href="{{ url_for('projects.index') }}" class="btn btn-outline-primary mb-2">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Projects
+                    </a>
+                    <h1 class="h2">
+                        {{ project.name }}
+                        {% if project.status == 'completed' %}
+                            <span class="badge bg-success">Completed</span>
+                        {% elif project.status == 'running' %}
+                            <span class="badge bg-primary">Running</span>
+                        {% elif project.status == 'pending' %}
+                            <span class="badge bg-warning text-dark">Pending</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ project.status|capitalize }}</span>
+                        {% endif %}
+                    </h1>
+                </div>
+                <div>
+                    {% if project.status == 'pending' %}
+                        <a href="{{ url_for('projects.start', project_id=project.id) }}" class="btn btn-success">
+                            <i class="fas fa-play me-1"></i> Start Training
+                        </a>
+                    {% elif project.status == 'running' %}
+                        <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#stopTrainingModal">
+                            <i class="fas fa-stop me-1"></i> Stop Training
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Project Info Row -->
+            <div class="row mb-4">
+                <div class="col-lg-8">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 font-weight-bold text-primary">Project Details</h6>
+                            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editProjectModal">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <p><strong>Dataset:</strong> {{ project.dataset_name }}</p>
+                                    <p><strong>Framework:</strong> {{ project.framework }}</p>
+                                    <p><strong>Min. Clients Required:</strong> {{ project.min_clients }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Created:</strong> {{ project.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                    <p><strong>Status:</strong> 
+                                        {% if project.status == 'completed' %}
+                                            <span class="badge bg-success">Completed</span>
+                                        {% elif project.status == 'running' %}
+                                            <span class="badge bg-primary">Running</span>
+                                        {% elif project.status == 'pending' %}
+                                            <span class="badge bg-warning text-dark">Pending</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">{{ project.status|capitalize }}</span>
+                                        {% endif %}
+                                    </p>
+                                    <p><strong>Rounds:</strong> 
+                                        {% if project.current_round > 0 %}
+                                            {{ project.current_round }} / {{ project.rounds }}
+                                        {% else %}
+                                            {{ project.rounds }} (planned)
+                                        {% endif %}
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <h6 class="font-weight-bold">Description</h6>
+                            <p>{{ project.description or 'No description provided.' }}</p>
+                            
+                            {% if project.current_round > 0 %}
+                                <h6 class="font-weight-bold mt-4">Training Progress</h6>
+                                <div class="progress" style="height: 25px;">
+                                    {% set progress = (project.current_round / project.rounds * 100)|int %}
+                                    <div class="progress-bar bg-success" role="progressbar" style="width: {{ progress }}%;" 
+                                        aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100">
+                                        {{ progress }}% (Round {{ project.current_round }} of {{ project.rounds }})
+                                    </div>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Training Metrics Card -->
+                <div class="col-lg-4">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Training Metrics</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if project.current_round > 0 %}
+                                <div class="mb-4">
+                                    <h6>Accuracy</h6>
+                                    <canvas id="accuracyChart" width="100%" height="75"></canvas>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <h6>Loss</h6>
+                                    <canvas id="lossChart" width="100%" height="75"></canvas>
+                                </div>
+                                
+                                <div class="text-center">
+                                    <a href="{{ url_for('dashboard.metrics') }}" class="btn btn-outline-primary btn-sm">
+                                        <i class="fas fa-chart-line me-1"></i> View Detailed Metrics
+                                    </a>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-5">
+                                    <i class="fas fa-chart-line fa-3x text-gray-300 mb-3"></i>
+                                    <p class="text-gray-500">Training metrics will appear here once training begins.</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Clients and Models Row -->
+            <div class="row">
+                <!-- Connected Clients -->
+                <div class="col-lg-6">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 font-weight-bold text-primary">Connected Clients ({{ project.clients|length }})</h6>
+                            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignClientsModal">
+                                <i class="fas fa-plus"></i> Assign Clients
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            {% if project.clients %}
+                                <div class="table-responsive">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Client Name</th>
+                                                <th>Status</th>
+                                                <th>Device</th>
+                                                <th>Last Update</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for client in project.clients %}
+                                                <tr>
+                                                    <td>
+                                                        <a href="{{ url_for('dashboard.client_detail', client_id=client.id) }}">
+                                                            {{ client.name }}
+                                                        </a>
+                                                    </td>
+                                                    <td>
+                                                        {% if client.is_connected %}
+                                                            <span class="badge bg-success">Online</span>
+                                                        {% else %}
+                                                            <span class="badge bg-danger">Offline</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>{{ client.device_info or 'Unknown' }}</td>
+                                                    <td>{{ client.last_heartbeat.strftime('%Y-%m-%d %H:%M') if client.last_heartbeat else 'Never' }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-5">
+                                    <i class="fas fa-laptop fa-3x text-gray-300 mb-3"></i>
+                                    <p class="text-gray-500">No clients connected to this project yet.</p>
+                                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#assignClientsModal">
+                                        <i class="fas fa-plus me-1"></i> Assign Clients
+                                    </button>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Models -->
+                <div class="col-lg-6">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Model Versions</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if project.models %}
+                                <div class="table-responsive">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Version</th>
+                                                <th>Round</th>
+                                                <th>Accuracy</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for model in project.models %}
+                                                <tr>
+                                                    <td><a href="{{ url_for('projects.view_model', project_id=project.id, model_id=model.id) }}">v{{ loop.index }}</a></td>
+                                                    <td>{{ model.round_number }}</td>
+                                                    <td>{{ "%.2f%%"|format(model.accuracy * 100) if model.accuracy else 'N/A' }}</td>
+                                                    <td>
+                                                        {% if model.is_deployed %}
+                                                            <span class="badge bg-success">Deployed</span>
+                                                        {% elif model.is_final %}
+                                                            <span class="badge bg-primary">Final</span>
+                                                        {% else %}
+                                                            <span class="badge bg-secondary">Training</span>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <div class="btn-group">
+                                                            <a href="{{ url_for('projects.view_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-primary">
+                                                                <i class="fas fa-eye"></i>
+                                                            </a>
+                                                            {% if model.is_final and not model.is_deployed %}
+                                                                <a href="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-success">
+                                                                    <i class="fas fa-rocket"></i>
+                                                                </a>
+                                                            {% endif %}
+                                                            {% if model.is_final or model.is_deployed %}
+                                                                <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-info">
+                                                                    <i class="fas fa-download"></i>
+                                                                </a>
+                                                            {% endif %}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-5">
+                                    <i class="fas fa-brain fa-3x text-gray-300 mb-3"></i>
+                                    <p class="text-gray-500">Models will appear here as training progresses.</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modals -->
+<!-- Stop Training Modal -->
+<div class="modal fade" id="stopTrainingModal" tabindex="-1" aria-labelledby="stopTrainingModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="stopTrainingModalLabel">Stop Training</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to stop the training process? This action cannot be undone.</p>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i> 
+                    Stopping training will create a final model with the current state, but further rounds will not be executed.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('projects.stop', project_id=project.id) }}" method="POST">
+                    <button type="submit" class="btn btn-danger">Stop Training</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Project Modal -->
+<div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editProjectModalLabel">Edit Project</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form action="{{ url_for('projects.edit', project_id=project.id) }}" method="POST">
+                    {{ form.csrf_token }}
+                    
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {% if form.name.errors %}
+                            {{ form.name(class="form-control is-invalid", value=project.name) }}
+                            <div class="invalid-feedback">
+                                {% for error in form.name.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            {{ form.name(class="form-control", value=project.name) }}
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {% if form.description.errors %}
+                            {{ form.description(class="form-control is-invalid", rows=4) }}
+                            <div class="invalid-feedback">
+                                {% for error in form.description.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            {{ form.description(class="form-control", rows=4, value=project.description) }}
+                        {% endif %}
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            {{ form.dataset_name.label(class="form-label") }}
+                            {% if form.dataset_name.errors %}
+                                {{ form.dataset_name(class="form-control is-invalid", value=project.dataset_name) }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.dataset_name.errors %}
+                                        {{ error }}
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.dataset_name(class="form-control", value=project.dataset_name) }}
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-6">
+                            {{ form.framework.label(class="form-label") }}
+                            {% if form.framework.errors %}
+                                {{ form.framework(class="form-select is-invalid") }}
+                                <div class="invalid-feedback">
+                                    {% for error in form.framework.errors %}
+                                        {{ error }}
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                {{ form.framework(class="form-select") }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            {{ form.min_clients.label(class="form-label") }}
+                            {% if project.status == 'pending' %}
+                                {% if form.min_clients.errors %}
+                                    {{ form.min_clients(class="form-control is-invalid", value=project.min_clients) }}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.min_clients.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    {{ form.min_clients(class="form-control", value=project.min_clients) }}
+                                {% endif %}
+                            {% else %}
+                                {{ form.min_clients(class="form-control", value=project.min_clients, disabled=true) }}
+                                <div class="form-text text-warning">
+                                    <i class="fas fa-lock me-1"></i>
+                                    Cannot modify after training has started
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <div class="col-md-6">
+                            {{ form.rounds.label(class="form-label") }}
+                            {% if project.status == 'pending' %}
+                                {% if form.rounds.errors %}
+                                    {{ form.rounds(class="form-control is-invalid", value=project.rounds) }}
+                                    <div class="invalid-feedback">
+                                        {% for error in form.rounds.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    {{ form.rounds(class="form-control", value=project.rounds) }}
+                                {% endif %}
+                            {% else %}
+                                {{ form.rounds(class="form-control", value=project.rounds, disabled=true) }}
+                                <div class="form-text text-warning">
+                                    <i class="fas fa-lock me-1"></i>
+                                    Cannot modify after training has started
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        {{ form.submit(class="btn btn-primary") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Assign Clients Modal -->
+<div class="modal fade" id="assignClientsModal" tabindex="-1" aria-labelledby="assignClientsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="assignClientsModalLabel">Assign Clients</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form action="{{ url_for('projects.assign_clients', project_id=project.id) }}" method="POST">
+                    {{ client_form.csrf_token }}
+                    
+                    <div class="mb-3">
+                        {{ client_form.clients.label(class="form-label") }}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Select clients to assign to this project. Only clients that are online and not currently assigned to another running project can be selected.
+                        </div>
+                        {% if client_form.clients.errors %}
+                            {{ client_form.clients(class="form-select is-invalid", size=10, multiple=true) }}
+                            <div class="invalid-feedback">
+                                {% for error in client_form.clients.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            {{ client_form.clients(class="form-select", size=10, multiple=true) }}
+                        {% endif %}
+                        <div class="form-text">
+                            Hold Ctrl (Windows) or Command (Mac) to select multiple clients.
+                        </div>
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        {{ client_form.submit(class="btn btn-primary") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_js %}
+{% if project.current_round > 0 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Sample data - In production, fetch from your backend API
+    const rounds = Array.from({length: {{ project.current_round }}}, (_, i) => i + 1);
+    
+    // Accuracy Chart
+    const accuracyData = {
+        labels: rounds,
+        datasets: [{
+            label: 'Accuracy',
+            data: [
+                {% for metric in project.metrics if metric.metric_type == 'accuracy' %}
+                    {{ metric.value }},
+                {% endfor %}
+            ],
+            borderColor: 'rgb(54, 162, 235)',
+            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+            tension: 0.1
+        }]
+    };
+    
+    const accuracyConfig = {
+        type: 'line',
+        data: accuracyData,
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1,
+                    ticks: {
+                        callback: function(value) {
+                            return (value * 100).toFixed(0) + '%';
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `Accuracy: ${(context.parsed.y * 100).toFixed(2)}%`;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    
+    // Loss Chart
+    const lossData = {
+        labels: rounds,
+        datasets: [{
+            label: 'Loss',
+            data: [
+                {% for metric in project.metrics if metric.metric_type == 'loss' %}
+                    {{ metric.value }},
+                {% endfor %}
+            ],
+            borderColor: 'rgb(255, 99, 132)',
+            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+            tension: 0.1
+        }]
+    };
+    
+    const lossConfig = {
+        type: 'line',
+        data: lossData,
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    };
+    
+    // Initialize Charts
+    window.addEventListener('DOMContentLoaded', (event) => {
+        new Chart(document.getElementById('accuracyChart'), accuracyConfig);
+        new Chart(document.getElementById('lossChart'), lossConfig);
+    });
+</script>
+{% endif %}
+
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    .badge {
+        font-size: 0.75rem;
+    }
+</style>
+{% endblock %} 

@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Metrics - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">Training Metrics</h1>
+            </div>
+            
+            {% if project_data %}
+                {% for data in project_data %}
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 font-weight-bold text-primary">{{ data.project.name }}</h6>
+                            <a href="{{ url_for('projects.view', project_id=data.project.id) }}" class="btn btn-sm btn-primary">
+                                <i class="fas fa-eye me-1"></i> View Project
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="stats-card mb-4">
+                                        <h5 class="text-muted">Status</h5>
+                                        <span class="badge bg-{{ 'success' if data.project.status == 'completed' else 'warning' if data.project.status == 'running' else 'secondary' }}">
+                                            {{ data.project.status }}
+                                        </span>
+                                    </div>
+                                    <div class="stats-card mb-4">
+                                        <h5 class="text-muted">Framework</h5>
+                                        <p>{{ data.project.framework }}</p>
+                                    </div>
+                                    <div class="stats-card mb-4">
+                                        <h5 class="text-muted">Dataset</h5>
+                                        <p>{{ data.project.dataset_name }}</p>
+                                    </div>
+                                    <div class="stats-card mb-4">
+                                        <h5 class="text-muted">Round Progress</h5>
+                                        <div class="progress">
+                                            {% set percent = (data.project.current_round / data.project.rounds * 100) %}
+                                            <div class="progress-bar" role="progressbar" style="width: {{ percent }}%" aria-valuenow="{{ percent }}" aria-valuemin="0" aria-valuemax="100">
+                                                {{ data.project.current_round }} / {{ data.project.rounds }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-9">
+                                    <div class="row mb-4">
+                                        <div class="col-md-6">
+                                            <div class="card mb-3">
+                                                <div class="card-header py-3">
+                                                    <h6 class="m-0 font-weight-bold text-primary">Accuracy</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <canvas id="accuracyChart{{ data.project.id }}"></canvas>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="card mb-3">
+                                                <div class="card-header py-3">
+                                                    <h6 class="m-0 font-weight-bold text-primary">Loss</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <canvas id="lossChart{{ data.project.id }}"></canvas>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="card">
+                                        <div class="card-header py-3">
+                                            <h6 class="m-0 font-weight-bold text-primary">Model Versions</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if data.models %}
+                                                <div class="table-responsive">
+                                                    <table class="table table-hover">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Version</th>
+                                                                <th>Created</th>
+                                                                <th>Accuracy</th>
+                                                                <th>Loss</th>
+                                                                <th>Clients</th>
+                                                                <th>Status</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {% for model in data.models %}
+                                                                <tr>
+                                                                    <td>v{{ model.version }}</td>
+                                                                    <td>{{ model.created_at|formatdatetime('%Y-%m-%d %H:%M') }}</td>
+                                                                    <td>
+                                                                        {% if model.metrics and model.metrics.accuracy is defined %}
+                                                                            {{ "%.2f"|format(model.metrics.accuracy * 100) }}%
+                                                                        {% else %}
+                                                                            N/A
+                                                                        {% endif %}
+                                                                    </td>
+                                                                    <td>
+                                                                        {% if model.metrics and model.metrics.loss is defined %}
+                                                                            {{ "%.4f"|format(model.metrics.loss) }}
+                                                                        {% else %}
+                                                                            N/A
+                                                                        {% endif %}
+                                                                    </td>
+                                                                    <td>{{ model.clients_count }}</td>
+                                                                    <td>
+                                                                        {% if model.is_deployed %}
+                                                                            <span class="badge bg-success">Deployed</span>
+                                                                        {% elif model.is_final %}
+                                                                            <span class="badge bg-primary">Final</span>
+                                                                        {% else %}
+                                                                            <span class="badge bg-secondary">Training</span>
+                                                                        {% endif %}
+                                                                    </td>
+                                                                </tr>
+                                                            {% endfor %}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            {% else %}
+                                                <div class="text-center py-4">
+                                                    <p>No models available for this project yet.</p>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <div class="card shadow mb-4">
+                    <div class="card-body">
+                        <div class="text-center py-5">
+                            <i class="fas fa-chart-line fa-4x text-gray-300 mb-3"></i>
+                            <h5>No Project Metrics Available</h5>
+                            <p class="text-muted">Create and run projects to see metrics here.</p>
+                            <a href="{{ url_for('projects.create') }}" class="btn btn-primary mt-3">
+                                <i class="fas fa-plus-circle me-2"></i>Create Project
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    .stats-card {
+        background: #f8f9fc;
+        border-radius: 8px;
+        padding: 15px;
+    }
+    
+    .stats-card h5 {
+        font-size: 14px;
+        margin-bottom: 8px;
+    }
+    
+    .stats-card p {
+        font-weight: bold;
+        margin-bottom: 0;
+    }
+</style>
+{% endblock %}
+
+{% block additional_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        {% for data in project_data %}
+            {% if data.accuracy_data %}
+                // Accuracy Chart
+                var accuracyCtx = document.getElementById('accuracyChart{{ data.project.id }}').getContext('2d');
+                var accuracyChart = new Chart(accuracyCtx, {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'Model Accuracy',
+                            data: {{ data.accuracy_data|tojson }},
+                            borderColor: '#4e73df',
+                            backgroundColor: 'rgba(78, 115, 223, 0.1)',
+                            borderWidth: 2,
+                            pointBackgroundColor: '#4e73df',
+                            tension: 0.3,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Round'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Accuracy'
+                                },
+                                ticks: {
+                                    callback: function(value) {
+                                        return (value * 100).toFixed(0) + '%';
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return 'Accuracy: ' + (context.parsed.y * 100).toFixed(2) + '%';
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // Loss Chart
+                var lossCtx = document.getElementById('lossChart{{ data.project.id }}').getContext('2d');
+                var lossChart = new Chart(lossCtx, {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'Model Loss',
+                            data: {{ data.loss_data|tojson }},
+                            borderColor: '#e74a3b',
+                            backgroundColor: 'rgba(231, 74, 59, 0.1)',
+                            borderWidth: 2,
+                            pointBackgroundColor: '#e74a3b',
+                            tension: 0.3,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: 'Round'
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                title: {
+                                    display: true,
+                                    text: 'Loss'
+                                }
+                            }
+                        }
+                    }
+                });
+            {% endif %}
+        {% endfor %}
+    });
+</script>
+{% endblock %} 

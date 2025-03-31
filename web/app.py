@@ -47,6 +47,9 @@ def create_app(config=None):
     app.register_blueprint(projects_bp, url_prefix='/projects')
     app.register_blueprint(api_bp, url_prefix='/api')
     
+    # Exempt API routes from CSRF protection
+    csrf.exempt(api_bp)
+    
     # Register error handlers
     @app.errorhandler(404)
     def page_not_found(e):

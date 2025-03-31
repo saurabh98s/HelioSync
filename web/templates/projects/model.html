@@ -1,0 +1,556 @@
+{% extends "base.html" %}
+
+{% block title %}Model Details - {{ project.name }} - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <a href="{{ url_for('projects.view', project_id=project.id) }}" class="btn btn-outline-primary mb-2">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Project
+                    </a>
+                    <h1 class="h2">
+                        Model v{{ model_version }}
+                        {% if model.is_deployed %}
+                            <span class="badge bg-success">Deployed</span>
+                        {% elif model.is_final %}
+                            <span class="badge bg-primary">Final</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Training</span>
+                        {% endif %}
+                    </h1>
+                    <p class="text-muted">{{ project.name }} - Round {{ model.round_number }}</p>
+                </div>
+                <div>
+                    {% if model.is_final and not model.is_deployed %}
+                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#deployModelModal">
+                            <i class="fas fa-rocket me-1"></i> Deploy Model
+                        </button>
+                    {% endif %}
+                    {% if model.is_final or model.is_deployed %}
+                        <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" class="btn btn-info">
+                            <i class="fas fa-download me-1"></i> Download
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Model Details Row -->
+            <div class="row mb-4">
+                <div class="col-lg-8">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Model Details</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <p><strong>Framework:</strong> {{ project.framework }}</p>
+                                    <p><strong>Dataset:</strong> {{ project.dataset_name }}</p>
+                                    <p><strong>Created:</strong> {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                </div>
+                                <div class="col-md-6">
+                                    <p><strong>Size:</strong> {{ (model.size / 1024 / 1024)|round(2) }} MB</p>
+                                    <p><strong>Contributors:</strong> {{ model.client_count }} clients</p>
+                                    {% if model.is_deployed %}
+                                        <p><strong>Deployed:</strong> {{ model.deployed_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            
+                            {% if model.is_deployed and model.deployment_type == 'api' %}
+                                <div class="alert alert-info">
+                                    <h6><i class="fas fa-server me-2"></i> API Deployment</h6>
+                                    <p class="mb-2">This model is available via API endpoint:</p>
+                                    <div class="input-group">
+                                        <input type="text" class="form-control" readonly value="{{ request.host_url }}api/model/{{ model.id }}/predict">
+                                        <button class="btn btn-outline-secondary copy-btn" type="button" data-clipboard-text="{{ request.host_url }}api/model/{{ model.id }}/predict">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
+                                    </div>
+                                    <div class="mt-3">
+                                        <p class="mb-2"><strong>Example usage:</strong></p>
+                                        <pre class="bg-light p-3 rounded"><code>curl -X POST \
+  {{ request.host_url }}api/model/{{ model.id }}/predict \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
+  -d '{
+    "data": [...]  // Your input data in appropriate format
+  }'</code></pre>
+                                    </div>
+                                </div>
+                            {% endif %}
+                            
+                            <h6 class="font-weight-bold">Performance</h6>
+                            <div class="row">
+                                <div class="col-md-4 text-center mb-4">
+                                    <div class="card border-left-primary shadow h-100 py-2">
+                                        <div class="card-body">
+                                            <div class="row no-gutters align-items-center">
+                                                <div class="col mr-2">
+                                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                                        Accuracy
+                                                    </div>
+                                                    <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                                        {{ "%.2f%%"|format(model.accuracy * 100) if model.accuracy else 'N/A' }}
+                                                    </div>
+                                                </div>
+                                                <div class="col-auto">
+                                                    <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4 text-center mb-4">
+                                    <div class="card border-left-danger shadow h-100 py-2">
+                                        <div class="card-body">
+                                            <div class="row no-gutters align-items-center">
+                                                <div class="col mr-2">
+                                                    <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">
+                                                        Loss
+                                                    </div>
+                                                    <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                                        {{ "%.4f"|format(model.loss) if model.loss else 'N/A' }}
+                                                    </div>
+                                                </div>
+                                                <div class="col-auto">
+                                                    <i class="fas fa-exclamation-triangle fa-2x text-gray-300"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4 text-center mb-4">
+                                    <div class="card border-left-success shadow h-100 py-2">
+                                        <div class="card-body">
+                                            <div class="row no-gutters align-items-center">
+                                                <div class="col mr-2">
+                                                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                                        Training Round
+                                                    </div>
+                                                    <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                                        {{ model.round_number }} / {{ project.rounds }}
+                                                    </div>
+                                                </div>
+                                                <div class="col-auto">
+                                                    <i class="fas fa-sync-alt fa-2x text-gray-300"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {% if model.additional_metrics %}
+                                <h6 class="font-weight-bold mt-4">Additional Metrics</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-bordered">
+                                        <thead>
+                                            <tr>
+                                                <th>Metric</th>
+                                                <th>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for metric_name, metric_value in model.additional_metrics.items() %}
+                                                <tr>
+                                                    <td>{{ metric_name|replace('_', ' ')|title }}</td>
+                                                    <td>{{ metric_value }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Model Visualization Card -->
+                <div class="col-lg-4">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Model Comparison</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if project.models|length > 1 %}
+                                <div class="mb-4">
+                                    <h6>Accuracy Comparison</h6>
+                                    <canvas id="accuracyComparisonChart" width="100%" height="200"></canvas>
+                                </div>
+                                
+                                <div class="mb-4">
+                                    <h6>Loss Comparison</h6>
+                                    <canvas id="lossComparisonChart" width="100%" height="200"></canvas>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-5">
+                                    <i class="fas fa-chart-line fa-3x text-gray-300 mb-3"></i>
+                                    <p class="text-gray-500">Comparison charts will be available when more model versions exist.</p>
+                                </div>
+                            {% endif %}
+                            
+                            <hr>
+                            
+                            <h6 class="mt-4">Contributing Clients</h6>
+                            {% if model.contributing_clients %}
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Client</th>
+                                                <th>Samples</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for client in model.contributing_clients %}
+                                                <tr>
+                                                    <td>
+                                                        <a href="{{ url_for('dashboard.client_detail', client_id=client.id) }}">
+                                                            {{ client.name }}
+                                                        </a>
+                                                    </td>
+                                                    <td>{{ client.samples }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <p class="text-muted">No client contribution data available.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Technical Details Row -->
+            <div class="row">
+                <div class="col-12">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Technical Details</h6>
+                        </div>
+                        <div class="card-body">
+                            <ul class="nav nav-tabs" id="modelTabs" role="tablist">
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link active" id="structure-tab" data-bs-toggle="tab" data-bs-target="#structure" type="button" role="tab" aria-controls="structure" aria-selected="true">
+                                        Model Structure
+                                    </button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="usage-tab" data-bs-toggle="tab" data-bs-target="#usage" type="button" role="tab" aria-controls="usage" aria-selected="false">
+                                        Usage Examples
+                                    </button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link" id="history-tab" data-bs-toggle="tab" data-bs-target="#history" type="button" role="tab" aria-controls="history" aria-selected="false">
+                                        Training History
+                                    </button>
+                                </li>
+                            </ul>
+                            <div class="tab-content" id="modelTabsContent">
+                                <div class="tab-pane fade show active p-3" id="structure" role="tabpanel" aria-labelledby="structure-tab">
+                                    {% if model.model_architecture %}
+                                        <pre class="bg-light p-3 rounded"><code>{{ model.model_architecture }}</code></pre>
+                                    {% else %}
+                                        <p class="text-muted py-4 text-center">Model architecture information not available.</p>
+                                    {% endif %}
+                                </div>
+                                <div class="tab-pane fade p-3" id="usage" role="tabpanel" aria-labelledby="usage-tab">
+                                    <h6 class="font-weight-bold">Loading the Model</h6>
+                                    {% if project.framework == 'tensorflow' %}
+                                        <pre class="bg-light p-3 rounded"><code>import tensorflow as tf
+
+# Load the model
+model = tf.keras.models.load_model('path/to/downloaded/model')
+
+# Make predictions
+predictions = model.predict(your_input_data)
+</code></pre>
+                                    {% elif project.framework == 'pytorch' %}
+                                        <pre class="bg-light p-3 rounded"><code>import torch
+
+# Load the model
+model = torch.load('path/to/downloaded/model')
+model.eval()  # Set to evaluation mode
+
+# Make predictions
+with torch.no_grad():
+    predictions = model(your_input_tensor)
+</code></pre>
+                                    {% elif project.framework == 'scikit-learn' %}
+                                        <pre class="bg-light p-3 rounded"><code>import pickle
+
+# Load the model
+with open('path/to/downloaded/model', 'rb') as f:
+    model = pickle.load(f)
+
+# Make predictions
+predictions = model.predict(your_input_data)
+</code></pre>
+                                    {% else %}
+                                        <p class="text-muted">Usage examples not available for this framework.</p>
+                                    {% endif %}
+                                    
+                                    <h6 class="font-weight-bold mt-4">Using the API</h6>
+                                    <pre class="bg-light p-3 rounded"><code># Python example with requests
+import requests
+import json
+
+url = "{{ request.host_url }}api/model/{{ model.id }}/predict"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer YOUR_API_KEY"
+}
+data = {
+    "data": [...]  # Your input data in appropriate format
+}
+
+response = requests.post(url, headers=headers, data=json.dumps(data))
+results = response.json()
+print(results)
+</code></pre>
+                                </div>
+                                <div class="tab-pane fade p-3" id="history" role="tabpanel" aria-labelledby="history-tab">
+                                    {% if model.training_history %}
+                                        <div class="table-responsive">
+                                            <table class="table table-striped">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Timestamp</th>
+                                                        <th>Event</th>
+                                                        <th>Details</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for entry in model.training_history %}
+                                                        <tr>
+                                                            <td>{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                                            <td>{{ entry.event }}</td>
+                                                            <td>{{ entry.details }}</td>
+                                                        </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    {% else %}
+                                        <p class="text-muted py-4 text-center">Training history not available.</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Deploy Model Modal -->
+<div class="modal fade" id="deployModelModal" tabindex="-1" aria-labelledby="deployModelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deployModelModalLabel">Deploy Model</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>How would you like to deploy this model?</p>
+                
+                <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST">
+                    {{ deploy_form.csrf_token }}
+                    
+                    <div class="mb-3">
+                        {{ deploy_form.deployment_type.label(class="form-label") }}
+                        {% if deploy_form.deployment_type.errors %}
+                            {{ deploy_form.deployment_type(class="form-select is-invalid") }}
+                            <div class="invalid-feedback">
+                                {% for error in deploy_form.deployment_type.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            {{ deploy_form.deployment_type(class="form-select") }}
+                        {% endif %}
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>API deployment</strong> allows you to make predictions via REST API calls.
+                        <br>
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>File deployment</strong> creates a downloadable model file you can use in your applications.
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        {{ deploy_form.submit(class="btn btn-success") }}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_js %}
+{% if project.models|length > 1 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Sample data - In production, fetch from your backend API
+    const modelVersions = [
+        {% for model_item in project.models %}
+            "v{{ loop.index }}",
+        {% endfor %}
+    ];
+    
+    const accuracyValues = [
+        {% for model_item in project.models %}
+            {{ model_item.accuracy or 0 }},
+        {% endfor %}
+    ];
+    
+    const lossValues = [
+        {% for model_item in project.models %}
+            {{ model_item.loss or 0 }},
+        {% endfor %}
+    ];
+    
+    // Accuracy Chart
+    const accuracyComparisonData = {
+        labels: modelVersions,
+        datasets: [{
+            label: 'Accuracy',
+            data: accuracyValues,
+            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+            borderColor: 'rgb(54, 162, 235)',
+            borderWidth: 1
+        }]
+    };
+    
+    const accuracyComparisonConfig = {
+        type: 'bar',
+        data: accuracyComparisonData,
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1,
+                    ticks: {
+                        callback: function(value) {
+                            return (value * 100).toFixed(0) + '%';
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `Accuracy: ${(context.parsed.y * 100).toFixed(2)}%`;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    
+    // Loss Chart
+    const lossComparisonData = {
+        labels: modelVersions,
+        datasets: [{
+            label: 'Loss',
+            data: lossValues,
+            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+            borderColor: 'rgb(255, 99, 132)',
+            borderWidth: 1
+        }]
+    };
+    
+    const lossComparisonConfig = {
+        type: 'bar',
+        data: lossComparisonData,
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    };
+    
+    // Initialize Charts
+    window.addEventListener('DOMContentLoaded', (event) => {
+        new Chart(document.getElementById('accuracyComparisonChart'), accuracyComparisonConfig);
+        new Chart(document.getElementById('lossComparisonChart'), lossComparisonConfig);
+    });
+    
+    // Clipboard functionality for API URL
+    document.addEventListener('DOMContentLoaded', function() {
+        const clipboardButtons = document.querySelectorAll('.copy-btn');
+        clipboardButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const textToCopy = this.getAttribute('data-clipboard-text');
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    const originalContent = this.innerHTML;
+                    this.innerHTML = '<i class="fas fa-check"></i>';
+                    setTimeout(() => {
+                        this.innerHTML = originalContent;
+                    }, 2000);
+                });
+            });
+        });
+    });
+</script>
+{% endif %}
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    .badge {
+        font-size: 0.75rem;
+    }
+    
+    .border-left-primary {
+        border-left: 0.25rem solid #4e73df !important;
+    }
+    
+    .border-left-success {
+        border-left: 0.25rem solid #1cc88a !important;
+    }
+    
+    .border-left-danger {
+        border-left: 0.25rem solid #e74a3b !important;
+    }
+    
+    pre {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    pre code {
+        white-space: pre;
+        display: block;
+    }
+</style>
+{% endblock %} 

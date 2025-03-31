@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+
+{% block title %}Projects - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">Projects</h1>
+                <div>
+                    <a href="{{ url_for('projects.create') }}" class="btn btn-primary">
+                        <i class="fas fa-plus-circle me-2"></i>New Project
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Projects Cards -->
+            <div class="row">
+                {% if projects %}
+                    {% for project in projects %}
+                        <div class="col-xl-4 col-md-6 mb-4">
+                            <div class="card shadow h-100">
+                                <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                                    <h6 class="m-0 font-weight-bold text-primary">{{ project.name }}</h6>
+                                    <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'running' else 'secondary' }}">
+                                        {{ project.status }}
+                                    </span>
+                                </div>
+                                <div class="card-body">
+                                    <div class="project-info mb-3">
+                                        <p class="text-muted mb-1">{{ project.description or 'No description provided.' }}</p>
+                                        <div class="small text-muted">
+                                            <i class="fas fa-database me-1"></i> {{ project.dataset_name }}
+                                            <span class="mx-2">|</span>
+                                            <i class="fas fa-code me-1"></i> {{ project.framework }}
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="progress-info mb-3">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span class="small">Round Progress</span>
+                                            <span class="small text-muted">{{ project.current_round }} / {{ project.rounds }}</span>
+                                        </div>
+                                        <div class="progress">
+                                            {% set percent = (project.current_round / project.rounds * 100) %}
+                                            <div class="progress-bar" role="progressbar" style="width: {{ percent }}%" aria-valuenow="{{ percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="project-stats d-flex justify-content-between mb-3">
+                                        <div class="stat-item">
+                                            <div class="stat-value">{{ project.models|length }}</div>
+                                            <div class="stat-label">Models</div>
+                                        </div>
+                                        <div class="stat-item">
+                                            <div class="stat-value">{{ project.clients|length }}</div>
+                                            <div class="stat-label">Clients</div>
+                                        </div>
+                                        <div class="stat-item">
+                                            <div class="stat-value">{{ project.min_clients }}</div>
+                                            <div class="stat-label">Min Clients</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="d-grid">
+                                        <a href="{{ url_for('projects.view', project_id=project.id) }}" class="btn btn-outline-primary">
+                                            <i class="fas fa-eye me-2"></i>View Details
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="card-footer py-2">
+                                    <div class="small text-muted">
+                                        <i class="fas fa-calendar-alt me-1"></i> Created: {{ project.created_at|formatdatetime('%b %d, %Y') }}
+                                        {% if project.updated_at != project.created_at %}
+                                            <span class="mx-2">|</span>
+                                            <i class="fas fa-clock me-1"></i> Updated: {{ project.updated_at|formatdatetime('%b %d, %Y') }}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="col-12">
+                        <div class="card shadow">
+                            <div class="card-body">
+                                <div class="text-center py-5">
+                                    <i class="fas fa-project-diagram fa-4x text-gray-300 mb-3"></i>
+                                    <h5>No Projects Yet</h5>
+                                    <p class="text-muted">Get started by creating your first federated learning project.</p>
+                                    <a href="{{ url_for('projects.create') }}" class="btn btn-primary mt-3">
+                                        <i class="fas fa-plus-circle me-2"></i>Create Project
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+            
+            {% if projects %}
+                <!-- Project Quick Stats -->
+                <div class="row mt-4">
+                    <div class="col-12">
+                        <div class="card shadow">
+                            <div class="card-header py-3">
+                                <h6 class="m-0 font-weight-bold text-primary">Project Statistics</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-xl-3 col-md-6 mb-4">
+                                        <div class="card border-left-primary shadow h-100 py-2">
+                                            <div class="card-body">
+                                                <div class="row no-gutters align-items-center">
+                                                    <div class="col mr-2">
+                                                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                                            Total Projects</div>
+                                                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ projects|length }}</div>
+                                                    </div>
+                                                    <div class="col-auto">
+                                                        <i class="fas fa-project-diagram fa-2x text-gray-300"></i>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-xl-3 col-md-6 mb-4">
+                                        <div class="card border-left-success shadow h-100 py-2">
+                                            <div class="card-body">
+                                                <div class="row no-gutters align-items-center">
+                                                    <div class="col mr-2">
+                                                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                                            Active Projects</div>
+                                                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ projects|selectattr('status', 'equalto', 'running')|list|length }}</div>
+                                                    </div>
+                                                    <div class="col-auto">
+                                                        <i class="fas fa-cogs fa-2x text-gray-300"></i>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-xl-3 col-md-6 mb-4">
+                                        <div class="card border-left-info shadow h-100 py-2">
+                                            <div class="card-body">
+                                                <div class="row no-gutters align-items-center">
+                                                    <div class="col mr-2">
+                                                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                                            Completed Projects</div>
+                                                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ projects|selectattr('status', 'equalto', 'completed')|list|length }}</div>
+                                                    </div>
+                                                    <div class="col-auto">
+                                                        <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-xl-3 col-md-6 mb-4">
+                                        <div class="card border-left-warning shadow h-100 py-2">
+                                            <div class="card-body">
+                                                <div class="row no-gutters align-items-center">
+                                                    <div class="col mr-2">
+                                                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                                            Average Rounds</div>
+                                                        <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                                            {% set total_rounds = 0 %}
+                                                            {% for project in projects %}
+                                                                {% set total_rounds = total_rounds + project.rounds %}
+                                                            {% endfor %}
+                                                            {{ (total_rounds / projects|length)|round(1) }}
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-auto">
+                                                        <i class="fas fa-circle-notch fa-2x text-gray-300"></i>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    .border-left-primary {
+        border-left: 4px solid #4e73df;
+    }
+    
+    .border-left-success {
+        border-left: 4px solid #1cc88a;
+    }
+    
+    .border-left-info {
+        border-left: 4px solid #36b9cc;
+    }
+    
+    .border-left-warning {
+        border-left: 4px solid #f6c23e;
+    }
+    
+    .project-stats {
+        border-top: 1px solid #e3e6f0;
+        border-bottom: 1px solid #e3e6f0;
+        padding: 10px 0;
+    }
+    
+    .stat-item {
+        text-align: center;
+        width: 33.333%;
+    }
+    
+    .stat-value {
+        font-weight: bold;
+        font-size: 1.5rem;
+        color: #4e73df;
+    }
+    
+    .stat-label {
+        font-size: 0.8rem;
+        color: #858796;
+        text-transform: uppercase;
+    }
+</style>
+{% endblock %} 

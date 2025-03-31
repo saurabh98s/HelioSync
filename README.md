@@ -88,14 +88,27 @@ python run.py --config production --host 0.0.0.0 --port 5000
 
 To configure a client to participate in federated learning:
 
-1. Install the client library:
+1. Ensure you have the required dependencies:
 ```bash
-pip install fl-client
+pip install requests
 ```
 
-2. Create a client configuration file:
+2. Run the federated client with your API key:
+```bash
+python federated_client.py --server http://your-server-url:5000 --api_key your-api-key
+```
+
+3. Command line options:
+```
+--server        Server URL (default: http://127.0.0.1:5000)
+--api_key       API key for authentication
+--name          Client name (defaults to hostname)
+--verbose       Enable verbose logging
+```
+
+4. Or import the client in your own code:
 ```python
-from fl_client import FederatedClient
+from federated_client import FederatedClient
 
 # Initialize client
 client = FederatedClient(
@@ -104,11 +117,9 @@ client = FederatedClient(
     client_name="my-device"
 )
 
-# Register with server
-client.register()
-
-# Start training loop
-client.start()
+# Start and run the client
+if client.start():
+    client.run()
 ```
 
 ## Example Projects
@@ -147,14 +158,30 @@ python run_client.py --client-id 1
 
 The platform provides a RESTful API for client integration:
 
-- `/api/health`: Check server status
-- `/api/register_client`: Register a new client
-- `/api/clients/<client_id>/heartbeat`: Update client status
+### Authentication
+All API requests require a valid API key, which should be included in the `X-API-Key` header.
+
+### Client Registration
+- `/api/register_client`: Register a new client (primary endpoint)
+- `/api/client/register`: Alias for client registration
+- `/api/clients/register`: Alias for client registration
+- `/api/register`: Alias for client registration
+
+### Client Heartbeat
+- `/api/client/heartbeat`: Update client status with heartbeat
+- `/api/clients/heartbeat`: Alias for client heartbeat
+- `/api/clients/<client_id>/heartbeat`: Update status for a specific client ID
+
+### Tasks and Projects
+- `/api/clients/tasks`: Get available tasks for a client
 - `/api/projects`: Get available projects
 - `/api/projects/<project_id>/server_info`: Get server information for a project
 - `/api/projects/<project_id>/update_status`: Update project status
 
-For detailed API documentation, see the `/api` endpoint in the web interface.
+### Health Check
+- `/api/health`: Check server status
+
+For detailed API usage examples, see the documentation in the web interface.
 
 ## Contributing
 

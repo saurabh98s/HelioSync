@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+
+{% block title %}Client Details - Federated Learning Platform{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <a href="{{ url_for('dashboard.clients') }}" class="btn btn-outline-primary mb-2">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Clients
+                    </a>
+                    <h1 class="h2">Client Details</h1>
+                </div>
+                <div>
+                    <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#disconnectClientModal">
+                        <i class="fas fa-unlink me-2"></i>Disconnect
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Client Info Card -->
+            <div class="row">
+                <div class="col-xl-4 col-lg-5">
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Client Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="text-center mb-4">
+                                <div class="client-icon mb-3">
+                                    <i class="fas fa-laptop"></i>
+                                </div>
+                                <h4>{{ client.name }}</h4>
+                                <div class="mb-2">
+                                    {% if client.is_connected %}
+                                        <span class="badge bg-success">Connected</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Offline</span>
+                                    {% endif %}
+                                </div>
+                                <p class="text-muted">Client ID: <code>{{ client.client_id }}</code></p>
+                            </div>
+                            
+                            <div class="client-info mt-4">
+                                <div class="info-item">
+                                    <div class="info-label">IP Address</div>
+                                    <div class="info-value">{{ client.ip_address or 'N/A' }}</div>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <div class="info-label">Device Info</div>
+                                    <div class="info-value">{{ client.device_info or 'N/A' }}</div>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <div class="info-label">Last Heartbeat</div>
+                                    <div class="info-value">
+                                        {% if client.last_heartbeat %}
+                                            {{ client.last_heartbeat|formatdatetime('%Y-%m-%d %H:%M:%S') }}
+                                        {% else %}
+                                            Never
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <div class="info-item">
+                                    <div class="info-label">Connected Since</div>
+                                    <div class="info-value">{{ client.created_at|formatdatetime('%Y-%m-%d %H:%M:%S') }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-xl-8 col-lg-7">
+                    <!-- Projects Card -->
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 font-weight-bold text-primary">Associated Projects</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if client.projects %}
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Project Name</th>
+                                                <th>Status</th>
+                                                <th>Training Progress</th>
+                                                <th>Joined</th>
+                                                <th>Last Update</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for project in client.projects %}
+                                                {% set project_client = project.project_clients|selectattr('client_id', 'equalto', client.id)|first %}
+                                                <tr>
+                                                    <td>
+                                                        <a href="{{ url_for('projects.view', project_id=project.id) }}">
+                                                            {{ project.name }}
+                                                        </a>
+                                                    </td>
+                                                    <td>
+                                                        <span class="badge bg-{{ 'success' if project_client.status == 'completed' else 'warning' if project_client.status == 'training' else 'primary' }}">
+                                                            {{ project_client.status }}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <div class="progress">
+                                                            {% if project_client.status == 'completed' %}
+                                                                <div class="progress-bar bg-success" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">100%</div>
+                                                            {% elif project_client.status == 'training' %}
+                                                                <div class="progress-bar bg-warning" role="progressbar" style="width: 50%" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100">In Progress</div>
+                                                            {% else %}
+                                                                <div class="progress-bar bg-primary" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                                                            {% endif %}
+                                                        </div>
+                                                    </td>
+                                                    <td>{{ project_client.joined_at|formatdatetime('%Y-%m-%d %H:%M') }}</td>
+                                                    <td>
+                                                        {% if project_client.last_update %}
+                                                            {{ project_client.last_update|formatdatetime('%Y-%m-%d %H:%M') }}
+                                                        {% else %}
+                                                            Never
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-4">
+                                    <i class="fas fa-project-diagram fa-3x text-gray-300 mb-3"></i>
+                                    <p>This client is not part of any projects yet.</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <!-- Training Metrics Card -->
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Training Metrics</h6>
+                        </div>
+                        <div class="card-body">
+                            {% if client.projects and client.project_clients|selectattr('metrics', 'defined')|list|length > 0 %}
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Project</th>
+                                                <th>Epochs</th>
+                                                <th>Samples</th>
+                                                <th>Accuracy</th>
+                                                <th>Loss</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for project in client.projects %}
+                                                {% set project_client = project.project_clients|selectattr('client_id', 'equalto', client.id)|first %}
+                                                {% if project_client.metrics %}
+                                                    <tr>
+                                                        <td>{{ project.name }}</td>
+                                                        <td>{{ project_client.local_epochs }}</td>
+                                                        <td>{{ project_client.training_samples }}</td>
+                                                        <td>
+                                                            {% if project_client.metrics.accuracy is defined %}
+                                                                {{ "%.2f"|format(project_client.metrics.accuracy * 100) }}%
+                                                            {% else %}
+                                                                N/A
+                                                            {% endif %}
+                                                        </td>
+                                                        <td>
+                                                            {% if project_client.metrics.loss is defined %}
+                                                                {{ "%.4f"|format(project_client.metrics.loss) }}
+                                                            {% else %}
+                                                                N/A
+                                                            {% endif %}
+                                                        </td>
+                                                    </tr>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="text-center py-4">
+                                    <i class="fas fa-chart-line fa-3x text-gray-300 mb-3"></i>
+                                    <p>No training metrics available yet.</p>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Disconnect Client Modal -->
+<div class="modal fade" id="disconnectClientModal" tabindex="-1" aria-labelledby="disconnectClientModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="disconnectClientModalLabel">Disconnect Client</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to disconnect client <strong>{{ client.name }}</strong>?</p>
+                <p>The client will no longer participate in federated learning projects until it reconnects.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="#" class="btn btn-danger">Disconnect Client</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    
+    .client-icon {
+        width: 80px;
+        height: 80px;
+        background-color: #4e73df;
+        color: white;
+        font-size: 2.5rem;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+    }
+    
+    .client-info .info-item {
+        display: flex;
+        border-bottom: 1px solid #e3e6f0;
+        padding: 10px 0;
+    }
+    
+    .client-info .info-item:last-child {
+        border-bottom: none;
+    }
+    
+    .client-info .info-label {
+        font-weight: bold;
+        width: 140px;
+        color: #4e73df;
+    }
+    
+    .client-info .info-value {
+        flex: 1;
+    }
+</style>
+{% endblock %} 

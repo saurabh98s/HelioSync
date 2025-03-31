@@ -28,20 +28,43 @@ def create_model(dataset_name: str) -> tf.keras.Model:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 def create_mnist_model() -> tf.keras.Model:
-    """Create a TensorFlow model for the MNIST dataset.
+    """Create a CNN model for MNIST classification.
     
     Returns:
-        A TensorFlow model for MNIST.
+        A compiled Keras model.
     """
     model = models.Sequential([
-        layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+        # Reshape input to 28x28x1
+        layers.Reshape((28, 28, 1), input_shape=(784,)),
+        
+        # First convolutional block
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.Dropout(0.25),
+        
+        # Second convolutional block
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
+        layers.BatchNormalization(),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),
+        layers.Dropout(0.25),
+        
+        # Dense layers
         layers.Flatten(),
-        layers.Dense(128, activation='relu'),
-        layers.Dense(10)
+        layers.Dense(512, activation='relu'),
+        layers.BatchNormalization(),
+        layers.Dropout(0.5),
+        layers.Dense(10, activation='softmax')
     ])
+    
+    # Compile model with Adam optimizer
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
     
     return model
 
