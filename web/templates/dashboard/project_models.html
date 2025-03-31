@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Models{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">{{ project.name }} - Models</h1>
+                <div>
+                    <a href="{{ url_for('projects.view', project_id=project.id) }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Project
+                    </a>
+                </div>
+            </div>
+
+            <!-- Global Model -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Global Model</h6>
+                </div>
+                <div class="card-body">
+                    {% if project.global_model %}
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p><strong>Status:</strong> 
+                                    <span class="badge bg-{{ 'success' if project.global_model.status == 'completed' else 'warning' if project.global_model.status == 'training' else 'secondary' }}">
+                                        {{ project.global_model.status }}
+                                    </span>
+                                </p>
+                                <p><strong>Accuracy:</strong> {{ "%.2f"|format(project.global_model.accuracy * 100) }}%</p>
+                                <p><strong>Loss:</strong> {{ "%.4f"|format(project.global_model.loss) }}</p>
+                                <p><strong>Created:</strong> {{ project.global_model.created_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
+                                <p><strong>Last Updated:</strong> {{ project.global_model.updated_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex justify-content-end">
+                                    <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=project.global_model.id) }}" class="btn btn-primary me-2">
+                                        <i class="fas fa-download me-2"></i>Download Model
+                                    </a>
+                                    <a href="{{ url_for('visualization.model_metrics', project_id=project.id, model_id=project.global_model.id) }}" class="btn btn-info">
+                                        <i class="fas fa-chart-line me-2"></i>View Metrics
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="fas fa-brain fa-3x text-gray-300 mb-3"></i>
+                            <p class="mb-0">No global model available yet</p>
+                            <p class="text-muted small mt-2">The global model will be created after client training</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Client Models -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Client Models</h6>
+                </div>
+                <div class="card-body">
+                    {% if project.client_models %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Client</th>
+                                        <th>Status</th>
+                                        <th>Accuracy</th>
+                                        <th>Loss</th>
+                                        <th>Last Update</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for model in project.client_models %}
+                                        <tr>
+                                            <td>{{ model.client.name }}</td>
+                                            <td>
+                                                <span class="badge bg-{{ 'success' if model.status == 'completed' else 'warning' if model.status == 'training' else 'secondary' }}">
+                                                    {{ model.status }}
+                                                </span>
+                                            </td>
+                                            <td>{{ "%.2f"|format(model.accuracy * 100) }}%</td>
+                                            <td>{{ "%.4f"|format(model.loss) }}</td>
+                                            <td>{{ model.updated_at|formatdatetime('%b %d, %Y %H:%M') }}</td>
+                                            <td>
+                                                <div class="btn-group">
+                                                    <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-primary">
+                                                        <i class="fas fa-download"></i>
+                                                    </a>
+                                                    <a href="{{ url_for('visualization.model_metrics', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-info">
+                                                        <i class="fas fa-chart-line"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="fas fa-users fa-3x text-gray-300 mb-3"></i>
+                            <p class="mb-0">No client models available yet</p>
+                            <p class="text-muted small mt-2">Client models will appear after training begins</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+</style>
+{% endblock %} 

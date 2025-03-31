@@ -1,76 +1,91 @@
 """
 Dashboard Routes
 
-This module provides routes for the dashboard interface.
+This module handles routes for the main dashboard.
 """
 
-from flask import Blueprint, render_template, flash, redirect, url_for, request, session
+from flask import Blueprint, render_template, jsonify, flash, redirect, url_for, request, session
 from flask_login import login_required, current_user
+from flask_wtf import FlaskForm
 
 from web.app import db
 from web.models import User, Organization, Project, Client, Model, ApiKey
+from sqlalchemy import func
 
 # Create blueprint
-dashboard_bp = Blueprint('dashboard', __name__)
+dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/dashboard')
 
 @dashboard_bp.route('/')
 @login_required
 def index():
-    """Dashboard home page."""
-    # If user doesn't belong to an organization, redirect to create organization page
-    if not current_user.organization:
-        flash('You need to create or join an organization first.', 'warning')
-        return redirect(url_for('auth.create_org'))
+    """Display the main dashboard."""
+    # Get user's organization
+    org = current_user.organization
     
-    # Get organization
-    organization = current_user.organization
-    
-    # Get statistics
+    # Calculate statistics
     stats = {
         'projects': {
-            'total': len(organization.projects),
-            'active': Project.query.join(Project.organizations).filter(
-                Organization.id == organization.id,
-                Project.status == 'running'
-            ).count(),
-            'completed': Project.query.join(Project.organizations).filter(
-                Organization.id == organization.id,
-                Project.status == 'completed'
-            ).count()
+            'total': Project.query.join(Project.organizations).filter(Organization.id == org.id).count(),
+            'active': Project.query.join(Project.organizations).filter(Organization.id == org.id, Project.status == 'active').count(),
+            'completed': Project.query.join(Project.organizations).filter(Organization.id == org.id, Project.status == 'completed').count()
         },
         'clients': {
-            'total': Client.query.filter_by(organization_id=organization.id).count(),
-            'active': Client.query.filter_by(
-                organization_id=organization.id,
-                is_connected=True
-            ).count()
+            'total': Client.query.filter_by(organization_id=org.id).count(),
+            'active': Client.query.filter_by(organization_id=org.id, is_connected=True).count(),
+            'inactive': Client.query.filter_by(organization_id=org.id, is_connected=False).count()
         },
         'models': {
-            'total': Model.query.join(Project).join(Project.organizations).filter(
-                Organization.id == organization.id
-            ).count(),
-            'deployed': Model.query.join(Project).join(Project.organizations).filter(
-                Organization.id == organization.id,
-                Model.is_deployed == True
-            ).count()
+            'total': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id).count(),
+            'trained': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id, Model.is_final == True).count(),
+            'training': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id, Model.is_final == False).count()
         }
     }
     
     # Get recent projects
-    recent_projects = Project.query.join(Project.organizations).filter(
-        Organization.id == organization.id
-    ).order_by(Project.created_at.desc()).limit(5).all()
+    recent_projects = Project.query.join(Project.organizations)\
+        .filter(Organization.id == org.id)\
+        .order_by(Project.created_at.desc())\
+        .limit(5)\
+        .all()
     
-    # Get recent models
-    recent_models = Model.query.join(Project).join(Project.organizations).filter(
-        Organization.id == organization.id
-    ).order_by(Model.created_at.desc()).limit(5).all()
+    # Get recent clients
+    recent_clients = Client.query.filter_by(organization_id=org.id)\
+        .order_by(Client.created_at.desc())\
+        .limit(5)\
+        .all()
     
     return render_template('dashboard/index.html',
-                          organization=organization,
-                          stats=stats,
-                          recent_projects=recent_projects,
-                          recent_models=recent_models)
+                         stats=stats,
+                         recent_projects=recent_projects,
+                         recent_clients=recent_clients)
+
+@dashboard_bp.route('/stats')
+@login_required
+def get_stats():
+    """Get dashboard statistics."""
+    # Get user's organization
+    org = current_user.organization
+    
+    # Calculate statistics
+    stats = {
+        'projects': {
+            'total': Project.query.join(Project.organizations).filter(Organization.id == org.id).count(),
+            'active': Project.query.join(Project.organizations).filter(Organization.id == org.id, Project.status == 'active').count(),
+            'completed': Project.query.join(Project.organizations).filter(Organization.id == org.id, Project.status == 'completed').count()
+        },
+        'clients': {
+            'total': Client.query.filter_by(organization_id=org.id).count(),
+            'active': Client.query.filter_by(organization_id=org.id, is_connected=True).count(),
+            'inactive': Client.query.filter_by(organization_id=org.id, is_connected=False).count()
+        },
+        'models': {
+            'total': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id).count(),
+            'trained': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id, Model.is_final == True).count(),
+            'training': Model.query.join(Project).join(Project.organizations).filter(Organization.id == org.id, Model.is_final == False).count()
+        }
+    }
+    
+    return jsonify(stats)
 
 @dashboard_bp.route('/clients')
 @login_required
@@ -133,11 +148,15 @@ def organization():
     if 'new_api_key' in session:
         new_api_key = session.pop('new_api_key')
     
+    # Create form for CSRF token
+    form = FlaskForm()
+    
     return render_template('dashboard/organization.html',
                           organization=organization,
                           users=users,
                           api_keys=api_keys,
-                          new_api_key=new_api_key)
+                          new_api_key=new_api_key,
+                          form=form)
 
 @dashboard_bp.route('/create_api_key', methods=['POST'])
 @login_required
@@ -148,33 +167,56 @@ def create_api_key():
         flash('You need to create or join an organization first.', 'warning')
         return redirect(url_for('auth.create_org'))
     
+    # Validate CSRF token
+    form = FlaskForm()
+    if not form.validate_on_submit():
+        flash('Invalid request. Please try again.', 'error')
+        return redirect(url_for('dashboard.organization'))
+    
     # Get organization
     organization = current_user.organization
     
-    # Check if expiration date is set
-    if request.form.get('set_expiration') == '1' and request.form.get('expiration_date'):
-        try:
-            # Parse date from form
-            from datetime import datetime
-            expiration_date = datetime.strptime(request.form.get('expiration_date'), '%Y-%m-%d')
-            
-            # Create API key with expiration
-            api_key = ApiKey(organization=organization, expires_at=expiration_date)
-        except ValueError:
-            flash('Invalid expiration date format.', 'error')
-            return redirect(url_for('dashboard.organization'))
-    else:
-        # Create API key without expiration
-        api_key = ApiKey(organization=organization)
+    try:
+        # Generate a new API key
+        import secrets
+        from datetime import datetime, timedelta
+        
+        # Generate a random key (this will be the actual key used)
+        api_key_value = secrets.token_hex(32)
+        
+        # Check if expiration date is set
+        if request.form.get('set_expiration') == '1' and request.form.get('expiration_date'):
+            try:
+                expiration_date = datetime.strptime(request.form.get('expiration_date'), '%Y-%m-%d')
+            except ValueError:
+                flash('Invalid expiration date format.', 'error')
+                return redirect(url_for('dashboard.organization'))
+        else:
+            # Default expiration is 1 year from now
+            expiration_date = datetime.utcnow() + timedelta(days=365)
+        
+        # Create new API key
+        api_key = ApiKey(
+            key=api_key_value,  # Store the raw key directly
+            organization=organization,
+            created_at=datetime.utcnow(),
+            expires_at=expiration_date,
+            is_active=True
+        )
+        
+        # Save to database
+        db.session.add(api_key)
+        db.session.commit()
+        
+        # Store the key in session to display it once
+        session['new_api_key'] = api_key_value
+        
+        flash('New API key created successfully.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error creating API key: {str(e)}', 'error')
     
-    # Save to database
-    db.session.add(api_key)
-    db.session.commit()
-    
-    # Store the key in session to display it once
-    session['new_api_key'] = api_key.key
-    
-    flash('New API key created successfully.', 'success')
     return redirect(url_for('dashboard.organization'))
 
 @dashboard_bp.route('/revoke_api_key', methods=['POST'])
@@ -186,26 +228,38 @@ def revoke_api_key():
         flash('You need to create or join an organization first.', 'warning')
         return redirect(url_for('auth.create_org'))
     
-    # Get organization
-    organization = current_user.organization
-    
-    # Get key ID from form
-    key_id = request.form.get('key_id')
-    if not key_id:
-        flash('Invalid request.', 'error')
+    # Validate CSRF token
+    form = FlaskForm()
+    if not form.validate_on_submit():
+        flash('Invalid request. Please try again.', 'error')
         return redirect(url_for('dashboard.organization'))
     
-    # Find the key
-    api_key = ApiKey.query.filter_by(id=key_id, organization_id=organization.id).first()
-    if not api_key:
-        flash('API key not found.', 'error')
-        return redirect(url_for('dashboard.organization'))
+    try:
+        # Get organization
+        organization = current_user.organization
+        
+        # Get key ID from form
+        key_id = request.form.get('key_id')
+        if not key_id:
+            flash('Invalid request.', 'error')
+            return redirect(url_for('dashboard.organization'))
+        
+        # Find the key
+        api_key = ApiKey.query.filter_by(id=key_id, organization_id=organization.id).first()
+        if not api_key:
+            flash('API key not found.', 'error')
+            return redirect(url_for('dashboard.organization'))
+        
+        # Revoke the key
+        api_key.is_active = False
+        db.session.commit()
+        
+        flash('API key revoked successfully.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error revoking API key: {str(e)}', 'error')
     
-    # Revoke the key
-    api_key.is_active = False
-    db.session.commit()
-    
-    flash('API key revoked successfully.', 'success')
     return redirect(url_for('dashboard.organization'))
 
 @dashboard_bp.route('/update_organization', methods=['POST'])
@@ -216,6 +270,12 @@ def update_organization():
     if not current_user.organization:
         flash('You need to create or join an organization first.', 'warning')
         return redirect(url_for('auth.create_org'))
+    
+    # Validate CSRF token
+    form = FlaskForm()
+    if not form.validate_on_submit():
+        flash('Invalid request. Please try again.', 'error')
+        return redirect(url_for('dashboard.organization'))
     
     # Get organization
     organization = current_user.organization

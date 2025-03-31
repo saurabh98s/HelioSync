@@ -1,5 +1,7 @@
 """
-Federated Learning - Client Models Package
+Client models package.
+"""
 
-This package contains model implementations for different ML frameworks and datasets.
-""" 
+from .tf_models import create_mnist_model
+
+__all__ = ['create_mnist_model'] 

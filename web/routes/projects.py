@@ -1,11 +1,11 @@
 """
-Project Routes
+Projects Routes
 
-This module provides routes for project management, including creation, viewing, and training control.
+This module handles routes for managing federated learning projects.
 """
 
 from datetime import datetime
-from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, send_file
+from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, send_file, jsonify
 from flask_login import login_required, current_user
 
 from web.app import db
@@ -15,33 +15,25 @@ from web.services.fl_manager import start_federated_server
 from web.services.model_manager import ModelManager
 
 # Create blueprint
-projects_bp = Blueprint('projects', __name__)
+projects_bp = Blueprint('projects', __name__, url_prefix='/projects')
 
 @projects_bp.route('/')
 @login_required
 def index():
-    """Project list page."""
-    # Check if user belongs to an organization
-    if not current_user.organization:
-        flash('You need to be part of an organization to access projects.', 'warning')
-        return redirect(url_for('auth.create_org'))
-    
-    # Get all projects for the user's organization
-    projects = current_user.organization.projects
-    
-    return render_template('projects/index.html', projects=projects)
+    """List all projects."""
+    if current_user.is_admin:
+        projects = Project.query.all()
+    else:
+        projects = Project.query.filter(
+            Project.organizations.any(id=current_user.organization_id)
+        ).all()
+    return render_template('dashboard/projects.html', projects=projects)
 
 @projects_bp.route('/create', methods=['GET', 'POST'])
 @login_required
 def create():
-    """Create project page."""
-    # Check if user belongs to an organization
-    if not current_user.organization:
-        flash('You need to be part of an organization to create projects.', 'warning')
-        return redirect(url_for('auth.create_org'))
-    
+    """Create a new project."""
     form = ProjectForm()
-    
     if form.validate_on_submit():
         project = Project(
             name=form.name.data,
@@ -50,87 +42,208 @@ def create():
             framework=form.framework.data,
             min_clients=form.min_clients.data,
             rounds=form.rounds.data,
-            creator_id=current_user.id,
-            created_at=datetime.utcnow()
+            creator_id=current_user.id
         )
-        
-        # Add to user's organization
         project.organizations.append(current_user.organization)
-        
         db.session.add(project)
         db.session.commit()
-        
-        flash(f'Project "{project.name}" created successfully!', 'success')
+        flash('Project created successfully.', 'success')
         return redirect(url_for('projects.view', project_id=project.id))
-    
-    return render_template('projects/create.html', form=form)
+    return render_template('dashboard/project_form.html', form=form, title='Create Project')
 
 @projects_bp.route('/<int:project_id>')
 @login_required
 def view(project_id):
-    """Project details page."""
+    """View project details."""
     project = Project.query.get_or_404(project_id)
     
-    # Check if user's organization is associated with the project
-    if current_user.organization not in project.organizations:
-        flash('You do not have access to this project.', 'danger')
+    # Check if user has access to this project
+    if not current_user.is_admin and not any(org.id == current_user.organization_id for org in project.organizations):
+        flash('You do not have permission to view this project.', 'error')
         return redirect(url_for('projects.index'))
     
-    # Eager load related data to avoid lazy loading issues
-    # This ensures proper parameter binding in SQL queries
-    project = Project.query.options(
-        db.joinedload(Project.project_clients),
-        db.joinedload(Project.models)
-    ).get_or_404(project_id)
+    return render_template('dashboard/project.html', project=project)
+
+@projects_bp.route('/<int:project_id>/edit', methods=['GET', 'POST'])
+@login_required
+def edit(project_id):
+    """Edit a project."""
+    project = Project.query.get_or_404(project_id)
     
-    # Create forms for the template
+    # Check if user has permission to edit
+    if not current_user.is_admin and project.creator_id != current_user.id:
+        flash('You do not have permission to edit this project.', 'error')
+        return redirect(url_for('projects.index'))
+    
     form = ProjectForm(obj=project)
+    if form.validate_on_submit():
+        project.name = form.name.data
+        project.description = form.description.data
+        project.dataset_name = form.dataset_name.data
+        project.framework = form.framework.data
+        project.min_clients = form.min_clients.data
+        project.rounds = form.rounds.data
+        db.session.commit()
+        flash('Project updated successfully.', 'success')
+        return redirect(url_for('projects.view', project_id=project.id))
     
-    # Get available clients that can be assigned to this project
-    available_clients = Client.query.filter_by(
-        organization_id=current_user.organization.id,
-        is_connected=True
-    ).all()
-    
-    # Debug output to console
-    print(f"Found {len(available_clients)} connected clients for assignment")
-    for client in available_clients:
-        print(f"  Client: {client.name}, ID: {client.id}, UUID: {client.client_id}, Connected: {client.is_connected}")
-    
-    client_form = ClientAssignmentForm(available_clients=available_clients)
-    
-    return render_template('projects/view.html', project=project, form=form, client_form=client_form)
+    return render_template('dashboard/project_form.html', form=form, title='Edit Project')
 
 @projects_bp.route('/<int:project_id>/start', methods=['POST'])
 @login_required
-def start(project_id):
-    """Start training for a project."""
+def start_project(project_id):
+    """Start a federated learning project."""
     project = Project.query.get_or_404(project_id)
     
-    # Check if user's organization is associated with the project
-    if current_user.organization not in project.organizations:
-        flash('You do not have access to this project.', 'danger')
-        return redirect(url_for('projects.index'))
+    # Check if user has access to this project
+    if not project.can_access(current_user):
+        flash('You do not have permission to start this project.', 'error')
+        return redirect(url_for('projects.view', project_id=project_id))
     
     # Check if project is already running
     if project.status == 'running':
-        flash('This project is already running.', 'warning')
-        return redirect(url_for('projects.view', project_id=project.id))
+        flash('Project is already running.', 'warning')
+        return redirect(url_for('projects.view', project_id=project_id))
     
-    # Check if there are enough clients
-    if project.active_clients_count < project.min_clients:
-        flash(f'Not enough active clients. Need at least {project.min_clients} clients.', 'warning')
-        return redirect(url_for('projects.view', project_id=project.id))
+    try:
+        # Get the FL server instance
+        fl_server = current_app.fl_server
+        if not fl_server:
+            flash('Federated learning server is not initialized.', 'error')
+            return redirect(url_for('projects.view', project_id=project_id))
+        
+        # Initialize the project in the FL server
+        success = fl_server.initialize_project(project)
+        if not success:
+            flash('Failed to initialize project.', 'error')
+            return redirect(url_for('projects.view', project_id=project_id))
+        
+        # Start the federated server
+        success = start_federated_server(project)
+        if not success:
+            flash('Failed to start federated server.', 'error')
+            return redirect(url_for('projects.view', project_id=project_id))
+        
+        # Update project status
+        project.status = 'running'
+        project.current_round = 0
+        db.session.commit()
+        
+        flash('Project started successfully.', 'success')
+        
+    except Exception as e:
+        current_app.logger.error(f"Error starting project: {str(e)}")
+        flash('An error occurred while starting the project.', 'error')
     
-    # Start the federated learning server
-    success = start_federated_server(project)
+    return redirect(url_for('projects.view', project_id=project_id))
+
+@projects_bp.route('/<int:project_id>/stop', methods=['POST'])
+@login_required
+def stop(project_id):
+    """Stop a project."""
+    project = Project.query.get_or_404(project_id)
     
-    if success:
-        flash('Training started successfully!', 'success')
-    else:
-        flash('Failed to start training. Please check the logs.', 'danger')
+    # Check if user has permission to stop
+    if not current_user.is_admin and project.creator_id != current_user.id:
+        flash('You do not have permission to stop this project.', 'error')
+        return redirect(url_for('projects.index'))
     
+    project.status = 'stopped'
+    db.session.commit()
+    
+    flash('Project stopped successfully.', 'success')
     return redirect(url_for('projects.view', project_id=project.id))
+
+@projects_bp.route('/<int:project_id>/clients')
+@login_required
+def clients(project_id):
+    """List clients for a project."""
+    project = Project.query.get_or_404(project_id)
+    
+    # Check if user has access to this project
+    if not current_user.is_admin and not any(org.id == current_user.organization_id for org in project.organizations):
+        flash('You do not have permission to view this project.', 'error')
+        return redirect(url_for('projects.index'))
+    
+    # Get available clients that are not already assigned to this project
+    assigned_client_ids = [pc.client_id for pc in project.project_clients]
+    available_clients = Client.query.filter(
+        Client.id.notin_(assigned_client_ids)
+    ).all()
+    
+    return render_template('dashboard/project_clients.html', 
+                         project=project,
+                         available_clients=available_clients)
+
+@projects_bp.route('/<int:project_id>/clients/assign', methods=['POST'])
+@login_required
+def assign_clients(project_id):
+    """Assign clients to a project."""
+    project = Project.query.get_or_404(project_id)
+    
+    # Check if user has access to this project
+    if not current_user.is_admin and not any(org.id == current_user.organization_id for org in project.organizations):
+        flash('You do not have permission to modify this project.', 'error')
+        return redirect(url_for('projects.index'))
+    
+    client_ids = request.form.getlist('client_ids')
+    if not client_ids:
+        flash('No clients selected.', 'warning')
+        return redirect(url_for('projects.clients', project_id=project.id))
+    
+    for client_id in client_ids:
+        client = Client.query.get(client_id)
+        if client and client not in [pc.client for pc in project.project_clients]:
+            project_client = ProjectClient(
+                project_id=project.id,
+                client_id=client.id,
+                status='pending'
+            )
+            db.session.add(project_client)
+    
+    db.session.commit()
+    flash('Clients assigned successfully.', 'success')
+    return redirect(url_for('projects.clients', project_id=project.id))
+
+@projects_bp.route('/<int:project_id>/clients/<int:client_id>/remove', methods=['POST'])
+@login_required
+def remove_client(project_id, client_id):
+    """Remove a client from a project."""
+    project = Project.query.get_or_404(project_id)
+    client = Client.query.get_or_404(client_id)
+    
+    # Check if user has access to this project
+    if not current_user.is_admin and not any(org.id == current_user.organization_id for org in project.organizations):
+        flash('You do not have permission to modify this project.', 'error')
+        return redirect(url_for('projects.index'))
+    
+    # Find and remove the project-client association
+    project_client = ProjectClient.query.filter_by(
+        project_id=project.id,
+        client_id=client.id
+    ).first()
+    
+    if project_client:
+        db.session.delete(project_client)
+        db.session.commit()
+        flash('Client removed successfully.', 'success')
+    else:
+        flash('Client is not assigned to this project.', 'warning')
+    
+    return redirect(url_for('projects.clients', project_id=project.id))
+
+@projects_bp.route('/<int:project_id>/models')
+@login_required
+def models(project_id):
+    """List models for a project."""
+    project = Project.query.get_or_404(project_id)
+    
+    # Check if user has access to this project
+    if not current_user.is_admin and not any(org.id == current_user.organization_id for org in project.organizations):
+        flash('You do not have permission to view this project.', 'error')
+        return redirect(url_for('projects.index'))
+    
+    return render_template('dashboard/project_models.html', project=project)
 
 @projects_bp.route('/<int:project_id>/models/<int:model_id>')
 @login_required
@@ -222,123 +335,37 @@ def download_model(project_id, model_id):
     flash('Model download not implemented yet.', 'info')
     return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
 
-@projects_bp.route('/<int:project_id>/stop', methods=['POST'])
+@projects_bp.route('/<int:project_id>/delete', methods=['POST'])
 @login_required
-def stop(project_id):
-    """Stop training for a project."""
+def delete(project_id):
+    """Delete a project."""
     project = Project.query.get_or_404(project_id)
     
-    # Check if user's organization is associated with the project
-    if current_user.organization not in project.organizations:
-        flash('You do not have access to this project.', 'danger')
+    # Check if user has permission to delete
+    if not current_user.is_admin and project.creator_id != current_user.id:
+        flash('You do not have permission to delete this project.', 'error')
         return redirect(url_for('projects.index'))
     
-    # Check if project is actually running
-    if project.status != 'running':
-        flash('This project is not currently running.', 'warning')
-        return redirect(url_for('projects.view', project_id=project.id))
-    
-    # TODO: Implement logic to stop the federated learning process
-    # Update project status
-    project.status = 'stopped'
-    db.session.commit()
-    
-    flash('Training stopped successfully.', 'success')
-    return redirect(url_for('projects.view', project_id=project.id))
-
-@projects_bp.route('/<int:project_id>/assign_clients', methods=['POST'])
-@login_required
-def assign_clients(project_id):
-    """Assign clients to a project."""
-    project = Project.query.get_or_404(project_id)
-    
-    # Check if user's organization is associated with the project
-    if current_user.organization not in project.organizations:
-        flash('You do not have access to this project.', 'danger')
+    # Check if project is running
+    if project.status == 'running':
+        flash('Cannot delete a running project. Please stop it first.', 'error')
         return redirect(url_for('projects.index'))
     
-    # Get available clients
-    available_clients = Client.query.filter_by(
-        organization_id=current_user.organization.id,
-        is_connected=True
-    ).all()
-    
-    # Debug output to console
-    print(f"Found {len(available_clients)} connected clients for assignment")
-    for client in available_clients:
-        print(f"  Client: {client.name}, ID: {client.id}, UUID: {client.client_id}, Connected: {client.is_connected}")
-    
-    client_form = ClientAssignmentForm(request.form, available_clients=available_clients)
-    
-    if client_form.validate_on_submit():
-        assigned_count = 0
-        already_assigned_count = 0
+    try:
+        # Delete associated models and project clients
+        Model.query.filter_by(project_id=project.id).delete()
+        ProjectClient.query.filter_by(project_id=project.id).delete()
         
-        # Process each selected client
-        for client_id in client_form.clients.data:
-            client = Client.query.get_or_404(client_id)
-            
-            # Check if client already assigned to this project
-            existing = ProjectClient.query.filter_by(
-                project_id=project.id, 
-                client_id=client.id
-            ).first()
-            
-            if existing:
-                already_assigned_count += 1
-            else:
-                # Create new project-client association
-                project_client = ProjectClient(
-                    project_id=project.id,
-                    client_id=client.id,
-                    joined_at=datetime.utcnow()
-                )
-                db.session.add(project_client)
-                assigned_count += 1
+        # Remove project from organizations
+        project.organizations = []
         
-        if assigned_count > 0:
-            db.session.commit()
-            flash(f'{assigned_count} clients assigned to project successfully!', 'success')
-        
-        if already_assigned_count > 0:
-            flash(f'{already_assigned_count} clients were already assigned to this project.', 'warning')
-    else:
-        for field, errors in client_form.errors.items():
-            for error in errors:
-                flash(f'Error in {getattr(client_form, field).label.text}: {error}', 'danger')
-    
-    return redirect(url_for('projects.view', project_id=project.id))
-
-@projects_bp.route('/<int:project_id>/edit', methods=['POST'])
-@login_required
-def edit(project_id):
-    """Edit a project."""
-    project = Project.query.get_or_404(project_id)
-    
-    # Check if user's organization is associated with the project
-    if current_user.organization not in project.organizations:
-        flash('You do not have access to this project.', 'danger')
-        return redirect(url_for('projects.index'))
-    
-    form = ProjectForm(request.form)
-    
-    if form.validate_on_submit():
-        # Update basic fields
-        project.name = form.name.data
-        project.description = form.description.data
-        project.dataset_name = form.dataset_name.data
-        
-        # Only update these if project hasn't started yet
-        if project.status == 'pending' or project.status == 'created':
-            project.framework = form.framework.data
-            project.min_clients = form.min_clients.data
-            project.rounds = form.rounds.data
-        
+        # Delete the project
+        db.session.delete(project)
         db.session.commit()
-        flash('Project updated successfully!', 'success')
-    else:
-        for field, errors in form.errors.items():
-            for error in errors:
-                flash(f'Error in {getattr(form, field).label.text}: {error}', 'danger')
+        
+        flash('Project deleted successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error deleting project: {str(e)}', 'error')
     
-    return redirect(url_for('projects.view', project_id=project.id)) 
+    return redirect(url_for('projects.index')) 

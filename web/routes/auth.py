@@ -6,41 +6,35 @@ This module provides routes for user authentication and organization management.
 
 import os
 from datetime import datetime
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, render_template, redirect, url_for, flash, request, session, current_app
 from flask_login import login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash
 
-from web.app import db
 from web.models import User, Organization, ApiKey
 from web.forms.auth import LoginForm, RegistrationForm, OrganizationForm
+from web.app import db
 
 # Create blueprint
-auth_bp = Blueprint('auth', __name__)
+auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    """User login page."""
-    # Redirect if user is already logged in
+    """Handle user login."""
     if current_user.is_authenticated:
         return redirect(url_for('dashboard.index'))
     
     form = LoginForm()
-    
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
+        if user is None or not user.check_password(form.password.data):
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('auth.login'))
         
-        if user and user.check_password(form.password.data):
-            login_user(user, remember=form.remember_me.data)
-            user.last_login = datetime.utcnow()
-            db.session.commit()
-            
-            # Redirect to next page or dashboard
-            next_page = request.args.get('next')
-            if next_page:
-                return redirect(next_page)
-            return redirect(url_for('dashboard.index'))
-        
-        flash('Invalid username or password.', 'danger')
+        login_user(user, remember=form.remember_me.data)
+        next_page = request.args.get('next')
+        if not next_page or not next_page.startswith('/'):
+            next_page = url_for('dashboard.index')
+        return redirect(next_page)
     
     return render_template('auth/login.html', form=form)
 
@@ -73,7 +67,7 @@ def register():
 @auth_bp.route('/logout')
 @login_required
 def logout():
-    """Logout user."""
+    """Handle user logout."""
     logout_user()
     flash('You have been logged out.', 'info')
     return redirect(url_for('index'))
@@ -102,29 +96,13 @@ def create_org():
         )
         
         db.session.add(organization)
-        db.session.commit()  # Commit organization first
+        db.session.commit()
         
-        # Step 3: Now update the user with organization reference
-        user = User.query.get(user_id)  # Reload user from DB
-        user.organization_id = organization.id
-        user.is_org_admin = True
-        db.session.commit()  # Commit user changes
+        # Step 3: Update user's organization after organization is created
+        current_user.organization_id = organization.id
+        db.session.commit()
         
-        # Step 4: Create an API key for the organization
-        api_key = ApiKey(
-            key=os.urandom(24).hex(),
-            organization_id=organization.id,  # Use ID instead of object reference
-            created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow().replace(year=datetime.utcnow().year + 1)
-        )
-        
-        db.session.add(api_key)
-        db.session.commit()  # Commit API key
-        
-        # Store the API key in the session for one-time display
-        session['new_api_key'] = api_key.key
-        
-        flash(f'Organization "{organization.name}" created successfully!', 'success')
+        flash('Organization created successfully!', 'success')
         return redirect(url_for('dashboard.organization'))
     
     return render_template('auth/create_organization.html', form=form)

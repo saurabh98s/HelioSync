@@ -34,11 +34,8 @@ def create_mnist_model() -> tf.keras.Model:
         A compiled Keras model.
     """
     model = models.Sequential([
-        # Reshape input to 28x28x1
-        layers.Reshape((28, 28, 1), input_shape=(784,)),
-        
         # First convolutional block
-        layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=(28, 28, 1)),
         layers.BatchNormalization(),
         layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),

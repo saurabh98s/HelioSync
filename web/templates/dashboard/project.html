@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Project Details{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">{{ project.name }}</h1>
+                <div>
+                    {% if not current_user.is_admin and project.creator_id == current_user.id %}
+                        <a href="{{ url_for('projects.edit', project_id=project.id) }}" class="btn btn-warning me-2">
+                            <i class="fas fa-edit me-2"></i>Edit Project
+                        </a>
+                        {% if project.status != 'running' %}
+                            <button type="button" class="btn btn-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteModal">
+                                <i class="fas fa-trash me-2"></i>Delete Project
+                            </button>
+                        {% endif %}
+                    {% endif %}
+                    <a href="{{ url_for('projects.index') }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Projects
+                    </a>
+                </div>
+            </div>
+
+            <!-- Project Status -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="m-0 font-weight-bold text-primary">Project Status</h6>
+                    <div>
+                        {% if project.status == 'created' %}
+                            <form action="{{ url_for('projects.start', project_id=project.id) }}" method="POST" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-play me-2"></i>Start Project
+                                </button>
+                            </form>
+                        {% elif project.status == 'running' %}
+                            <form action="{{ url_for('projects.stop', project_id=project.id) }}" method="POST" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-warning">
+                                    <i class="fas fa-stop me-2"></i>Stop Project
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Status:</strong> 
+                                <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'running' else 'secondary' }}">
+                                    {{ project.status }}
+                                </span>
+                            </p>
+                            <p><strong>Framework:</strong> {{ project.framework }}</p>
+                            <p><strong>Dataset:</strong> {{ project.dataset_name }}</p>
+                            <p><strong>Minimum Clients:</strong> {{ project.min_clients }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Current Round:</strong> {{ project.current_round }} / {{ project.rounds }}</p>
+                            <p><strong>Active Clients:</strong> {{ project.active_clients_count }}</p>
+                            <p><strong>Created:</strong> {{ project.created_at|formatdatetime('%b %d, %Y') }}</p>
+                            <p><strong>Last Updated:</strong> {{ project.updated_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Project Description -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Description</h6>
+                </div>
+                <div class="card-body">
+                    {{ project.description or 'No description provided.' }}
+                </div>
+            </div>
+
+            <!-- Project Actions -->
+            <div class="row">
+                <!-- Clients Card -->
+                <div class="col-md-6 mb-4">
+                    <div class="card shadow h-100">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Clients</h6>
+                        </div>
+                        <div class="card-body">
+                            <p>Manage clients participating in this project.</p>
+                            <a href="{{ url_for('projects.clients', project_id=project.id) }}" class="btn btn-primary">
+                                <i class="fas fa-users me-2"></i>Manage Clients
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Models Card -->
+                <div class="col-md-6 mb-4">
+                    <div class="card shadow h-100">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Models</h6>
+                        </div>
+                        <div class="card-body">
+                            <p>View and manage trained models.</p>
+                            <a href="{{ url_for('projects.models', project_id=project.id) }}" class="btn btn-primary">
+                                <i class="fas fa-brain me-2"></i>View Models
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Project</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to delete the project "{{ project.name }}"?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form action="{{ url_for('projects.delete', project_id=project.id) }}" method="POST" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+</style>
+{% endblock %} 

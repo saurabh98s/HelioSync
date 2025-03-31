@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}Data Distribution{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Data Distribution</h2>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Data Overview</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group">
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Total Samples
+                            <span id="totalSamples" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Average Samples per Client
+                            <span id="avgSamples" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Number of Clients
+                            <span id="numClients" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Client Data Distribution</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="clientDistribution"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Detailed Client Data</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Training Samples</th>
+                                    <th>Validation Samples</th>
+                                    <th>Total Samples</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clientTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let distributionChart;
+
+function updateDataInfo() {
+    fetch('/api/data')
+        .then(response => response.json())
+        .then(data => {
+            // Update data overview
+            document.getElementById('totalSamples').textContent = data.total_samples.toLocaleString();
+            document.getElementById('avgSamples').textContent = Math.round(data.total_samples / Object.keys(data.client_data_distribution).length).toLocaleString();
+            document.getElementById('numClients').textContent = Object.keys(data.client_data_distribution).length;
+            
+            // Update client distribution chart
+            const ctx = document.getElementById('clientDistribution').getContext('2d');
+            if (!distributionChart) {
+                distributionChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(data.client_data_distribution),
+                        datasets: [{
+                            label: 'Training Samples',
+                            data: Object.values(data.client_data_distribution).map(d => d.train_samples),
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderColor: 'rgb(75, 192, 192)',
+                            borderWidth: 1
+                        }, {
+                            label: 'Validation Samples',
+                            data: Object.values(data.client_data_distribution).map(d => d.val_samples),
+                            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                            borderColor: 'rgb(255, 99, 132)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                stacked: true
+                            },
+                            x: {
+                                stacked: true
+                            }
+                        }
+                    }
+                });
+            } else {
+                distributionChart.data.labels = Object.keys(data.client_data_distribution);
+                distributionChart.data.datasets[0].data = Object.values(data.client_data_distribution).map(d => d.train_samples);
+                distributionChart.data.datasets[1].data = Object.values(data.client_data_distribution).map(d => d.val_samples);
+                distributionChart.update();
+            }
+            
+            // Update client table
+            const tableBody = document.getElementById('clientTable');
+            tableBody.innerHTML = '';
+            Object.entries(data.client_data_distribution).forEach(([client_id, distribution]) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${client_id}</td>
+                    <td>${distribution.train_samples.toLocaleString()}</td>
+                    <td>${distribution.val_samples.toLocaleString()}</td>
+                    <td>${(distribution.train_samples + distribution.val_samples).toLocaleString()}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        })
+        .catch(error => console.error('Error fetching data info:', error));
+}
+
+// Update data info every 30 seconds
+setInterval(updateDataInfo, 30000);
+updateDataInfo(); // Initial update
+</script>
+{% endblock %}
+{% endblock %} 

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Visualization Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">Visualization Dashboard</h1>
+            </div>
+
+            <!-- Projects Grid -->
+            <div class="row">
+                {% for project in projects %}
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card shadow h-100">
+                            <div class="card-header py-3">
+                                <h6 class="m-0 font-weight-bold text-primary">{{ project.name }}</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <p class="mb-1"><strong>Status:</strong> 
+                                        <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'running' else 'secondary' }}">
+                                            {{ project.status }}
+                                        </span>
+                                    </p>
+                                    <p class="mb-1"><strong>Framework:</strong> {{ project.framework }}</p>
+                                    <p class="mb-1"><strong>Dataset:</strong> {{ project.dataset_name }}</p>
+                                    <p class="mb-0"><strong>Active Clients:</strong> {{ project.active_clients_count }}</p>
+                                </div>
+                                <a href="{{ url_for('visualization.project_metrics', project_id=project.id) }}" class="btn btn-primary">
+                                    <i class="fas fa-chart-line me-2"></i>View Metrics
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="col-12">
+                        <div class="text-center py-5">
+                            <i class="fas fa-chart-bar fa-3x text-gray-300 mb-3"></i>
+                            <p class="mb-0">No projects available for visualization</p>
+                            <p class="text-muted small mt-2">Create a project to start visualizing metrics</p>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+</style>
+{% endblock %} 

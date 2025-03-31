@@ -3,15 +3,13 @@
 {% block title %}Server Error{% endblock %}
 
 {% block content %}
-<div class="container my-5">
+<div class="container mt-5">
     <div class="row justify-content-center">
-        <div class="col-md-8 text-center">
-            <div class="error-container">
-                <h1 class="display-1">500</h1>
-                <h2 class="mb-4">Server Error</h2>
-                <p class="lead mb-4">Something went wrong on our end. Our team has been notified and we are working to fix the issue.</p>
-                <a href="{{ url_for('index') }}" class="btn btn-primary">Return to Home</a>
-            </div>
+        <div class="col-md-6 text-center">
+            <h1 class="display-1">500</h1>
+            <h2>Internal Server Error</h2>
+            <p class="lead">Something went wrong on our end. Please try again later.</p>
+            <a href="{{ url_for('index') }}" class="btn btn-primary">Return to Home</a>
         </div>
     </div>
 </div>

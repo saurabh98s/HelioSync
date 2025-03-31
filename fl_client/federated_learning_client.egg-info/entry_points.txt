@@ -1,0 +1,2 @@
+[console_scripts]
+fl-client = fl_client.run_client:main

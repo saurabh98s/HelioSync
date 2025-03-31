@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Client Control Dashboard</h1>
+        </div>
+    </div>
+
+    <!-- Training Progress -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Training Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: {{ (metrics.current_round / metrics.total_rounds * 100) if metrics.total_rounds else 0 }}%">
+                            Round {{ metrics.current_round }}/{{ metrics.total_rounds }}
+                        </div>
+                    </div>
+                    <p>Connected Clients: {{ metrics.connected_clients }}/{{ metrics.min_clients }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client List -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Connected Clients</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table" id="clientTable">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Current Epoch</th>
+                                    <th>Loss</th>
+                                    <th>Accuracy</th>
+                                    <th>Last Update</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for client in clients %}
+                                <tr id="client-{{ client.client_id }}">
+                                    <td>{{ client.client_id }}</td>
+                                    <td>{{ client.name }}</td>
+                                    <td>
+                                        <span class="badge {% if client_statuses[client.client_id] == 'continue' %}bg-success
+                                                         {% elif client_statuses[client.client_id] == 'stop' %}bg-danger
+                                                         {% else %}bg-warning{% endif %}">
+                                            {{ client_statuses[client.client_id]|default('wait') }}
+                                        </span>
+                                    </td>
+                                    <td class="epoch-progress">
+                                        {% if round_metrics and round_metrics[metrics.current_round] %}
+                                            {% for metric in round_metrics[metrics.current_round] %}
+                                                {% if metric.client_id == client.client_id %}
+                                                    {{ metric.epoch }}/{{ metric.total_epochs }}
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="loss">
+                                        {% if round_metrics and round_metrics[metrics.current_round] %}
+                                            {% for metric in round_metrics[metrics.current_round] %}
+                                                {% if metric.client_id == client.client_id %}
+                                                    {{ "%.4f"|format(metric.loss) }}
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="accuracy">
+                                        {% if round_metrics and round_metrics[metrics.current_round] %}
+                                            {% for metric in round_metrics[metrics.current_round] %}
+                                                {% if metric.client_id == client.client_id %}
+                                                    {{ "%.4f"|format(metric.accuracy) }}
+                                                {% endif %}
+                                            {% endfor %}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ client.last_heartbeat.strftime('%Y-%m-%d %H:%M:%S') if client.last_heartbeat else '-' }}</td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <button class="btn btn-sm btn-success control-client" 
+                                                    data-client-id="{{ client.client_id }}" 
+                                                    data-action="continue">
+                                                Continue
+                                            </button>
+                                            <button class="btn btn-sm btn-warning control-client" 
+                                                    data-client-id="{{ client.client_id }}" 
+                                                    data-action="wait">
+                                                Wait
+                                            </button>
+                                            <button class="btn btn-sm btn-danger control-client" 
+                                                    data-client-id="{{ client.client_id }}" 
+                                                    data-action="stop">
+                                                Stop
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle client control buttons
+    document.querySelectorAll('.control-client').forEach(button => {
+        button.addEventListener('click', function() {
+            const clientId = this.dataset.clientId;
+            const action = this.dataset.action;
+            
+            fetch(`/clients/${clientId}/control`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `action=${action}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateClientStatus(clientId, action);
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error controlling client');
+            });
+        });
+    });
+
+    // Function to update client metrics
+    function updateClientMetrics() {
+        fetch('/api/metrics')
+            .then(response => response.json())
+            .then(data => {
+                const currentRound = data.current_round;
+                const roundMetrics = data.round_metrics[currentRound] || [];
+                
+                // Update each client's metrics
+                roundMetrics.forEach(metric => {
+                    const row = document.querySelector(`#client-${metric.client_id}`);
+                    if (row) {
+                        row.querySelector('.epoch-progress').textContent = `${metric.epoch}/${metric.total_epochs}`;
+                        row.querySelector('.loss').textContent = metric.loss.toFixed(4);
+                        row.querySelector('.accuracy').textContent = metric.accuracy.toFixed(4);
+                    }
+                });
+            })
+            .catch(error => console.error('Error fetching metrics:', error));
+    }
+
+    // Update metrics every 2 seconds
+    setInterval(updateClientMetrics, 2000);
+});
+</script>
+{% endblock %}
+{% endblock %} 

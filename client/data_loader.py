@@ -16,95 +16,26 @@ import tensorflow as tf
 import torch
 from torch.utils.data import Dataset, DataLoader, Subset, random_split
 from torchvision import datasets, transforms
+from tensorflow.keras.datasets import mnist
 
-def load_dataset(
-    dataset_name: str,
-    client_id: str,
-    data_dir: str = "./data",
-    num_clients: int = 10,
-    iid: bool = False,
-    alpha: float = 0.5,  # Dirichlet distribution parameter
-):
-    """Load and partition a dataset for federated learning.
+def load_dataset():
+    """Load MNIST dataset.
     
-    Args:
-        dataset_name: Name of the dataset ('mnist', 'cifar10', etc.).
-        client_id: Unique identifier for the client.
-        data_dir: Directory to store/load the data.
-        num_clients: Total number of clients in the federated learning system.
-        iid: Whether to partition data in an IID (independent and identically distributed) manner.
-        alpha: Parameter for Dirichlet distribution when creating non-IID partitions.
-        
     Returns:
-        A tuple of (train_data, test_data) for the specified client.
-    """
-    # Extract client index from client_id
-    client_idx = int(client_id.split('_')[-1]) % num_clients
-    
-    # Create data directory if it doesn't exist
-    os.makedirs(data_dir, exist_ok=True)
-    
-    if dataset_name.lower() == "mnist":
-        return load_mnist(client_idx, data_dir, num_clients, iid, alpha)
-    elif dataset_name.lower() == "cifar10":
-        return load_cifar10(client_idx, data_dir, num_clients, iid, alpha)
-    elif dataset_name.lower() == "sentiment":
-        return load_sentiment(client_idx, data_dir, num_clients, iid)
-    else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}")
-
-def load_mnist(
-    client_idx: int,
-    data_dir: str,
-    num_clients: int,
-    iid: bool,
-    alpha: float,
-):
-    """Load and partition the MNIST dataset for federated learning.
-    
-    Args:
-        client_idx: Index of the client.
-        data_dir: Directory to store/load the data.
-        num_clients: Total number of clients.
-        iid: Whether to partition data in an IID manner.
-        alpha: Parameter for Dirichlet distribution.
-        
-    Returns:
-        A tuple of (train_data, test_data) for the specified client.
+        Tuple of (x_train, y_train, x_test, y_test)
     """
     # Load MNIST dataset
-    (x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+    (x_train, y_train), (x_test, y_test) = mnist.load_data()
     
-    # Normalize data
-    x_train = x_train.astype(np.float32) / 255.0
-    x_test = x_test.astype(np.float32) / 255.0
+    # Normalize pixel values
+    x_train = x_train.astype('float32') / 255.0
+    x_test = x_test.astype('float32') / 255.0
     
-    # Reshape data for CNN models
+    # Reshape for CNN
     x_train = x_train.reshape(-1, 28, 28, 1)
     x_test = x_test.reshape(-1, 28, 28, 1)
     
-    # Partition data
-    if iid:
-        # IID partitioning
-        num_samples_per_client = len(x_train) // num_clients
-        client_train_data = (
-            x_train[client_idx * num_samples_per_client:(client_idx + 1) * num_samples_per_client],
-            y_train[client_idx * num_samples_per_client:(client_idx + 1) * num_samples_per_client],
-        )
-    else:
-        # Non-IID partitioning using Dirichlet distribution
-        client_train_data = create_non_iid_partition(
-            x_train, y_train, client_idx, num_clients, alpha
-        )
-    
-    # Use a subset of test data for each client
-    num_test_samples_per_client = len(x_test) // num_clients
-    client_test_data = (
-        x_test[client_idx * num_test_samples_per_client:(client_idx + 1) * num_test_samples_per_client],
-        y_test[client_idx * num_test_samples_per_client:(client_idx + 1) * num_test_samples_per_client],
-    )
-    
-    return client_train_data, client_test_data
+    return x_train, y_train, x_test, y_test
 
 def load_cifar10(
     client_idx: int,

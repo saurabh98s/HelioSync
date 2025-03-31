@@ -13,6 +13,8 @@ import time
 from datetime import datetime
 import numpy as np
 import tensorflow as tf
+import requests
+import platform
 
 class FederatedClient:
     """
@@ -23,7 +25,7 @@ class FederatedClient:
     """
     
     def __init__(self, client_id, model, x_train, y_train, x_test=None, y_test=None, 
-                 batch_size=32, epochs=5):
+                 batch_size=32, epochs=5, api_key=None, server_url="http://localhost:5000"):
         """
         Initialize the Federated Learning Client.
         
@@ -36,6 +38,8 @@ class FederatedClient:
             y_test: Test data labels (optional).
             batch_size: Batch size for local training.
             epochs: Number of local epochs.
+            api_key: API key for authentication.
+            server_url: URL of the federated learning server.
         """
         self.client_id = client_id
         self.model = model
@@ -45,14 +49,12 @@ class FederatedClient:
         self.y_test = y_test
         self.batch_size = batch_size
         self.epochs = epochs
+        self.api_key = api_key
+        self.server_url = server_url
+        self.is_training = False
+        self.current_round = 0
         
-        # Initialize socket and connection
-        self.sock = None
-        self.connected = False
-        self.running = False
-        self.current_weights = None
-        
-        # Track training metrics
+        # Initialize metrics
         self.metrics = {
             'train_loss': [],
             'train_accuracy': [],
@@ -61,284 +63,245 @@ class FederatedClient:
             'training_time': 0
         }
         
-        # Lock for thread safety
-        self.lock = threading.Lock()
-    
-    def start(self, server_host, server_port):
-        """
-        Connect to the server and start the client.
+        # Client state
+        self.running = False
+        self.connected = False
+        self.client_thread = None
         
-        Args:
-            server_host: Server hostname or IP.
-            server_port: Server port.
-        """
-        # Create a socket connection to the server
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            self.sock.connect((server_host, server_port))
-            self.connected = True
-            print(f"Connected to server at {server_host}:{server_port}")
-            
-            # Start the client thread
-            self.running = True
-            self.client_thread = threading.Thread(target=self._run)
-            self.client_thread.daemon = True
-            self.client_thread.start()
-        except Exception as e:
-            print(f"Failed to connect to server: {e}")
-            self.sock = None
-    
-    def _run(self):
-        """Main client thread that handles communication with the server."""
-        try:
-            # Send initial registration message
-            self._send_message({
-                'type': 'register',
-                'client_id': self.client_id,
-                'data_size': len(self.x_train)
-            })
-            
-            # Main communication loop
-            while self.running:
-                message = self._receive_message()
-                if not message:
-                    print("Connection closed by server.")
-                    break
-                
-                self._handle_message(message)
-                
-        except Exception as e:
-            print(f"Error in client thread: {e}")
-        finally:
-            self.connected = False
-            if self.sock:
-                self.sock.close()
-                self.sock = None
-    
-    def _handle_message(self, message):
-        """
-        Handle a message received from the server.
-        
-        Args:
-            message: The received message.
-        """
-        msg_type = message.get('type')
-        
-        if msg_type == 'train':
-            # Server is requesting training
-            weights = message.get('weights')
-            round_num = message.get('round')
-            
-            print(f"Received training request for round {round_num}")
-            
-            # Convert weights from list to numpy arrays
-            model_weights = [np.array(w) for w in weights]
-            
-            # Set model weights
-            self.model.set_weights(model_weights)
-            
-            # Train the model
-            training_result = self._train()
-            
-            # Send the updated weights back to the server
-            self._send_message({
-                'type': 'update',
-                'client_id': self.client_id,
-                'weights': [w.tolist() for w in self.model.get_weights()],
-                'metrics': training_result,
-                'round': round_num
-            })
-            
-        elif msg_type == 'evaluate':
-            # Server is requesting evaluation
-            weights = message.get('weights')
-            
-            # Convert weights from list to numpy arrays
-            model_weights = [np.array(w) for w in weights]
-            
-            # Set model weights
-            self.model.set_weights(model_weights)
-            
-            # Evaluate the model
-            eval_result = self._evaluate()
-            
-            # Send the evaluation results back to the server
-            self._send_message({
-                'type': 'eval_result',
-                'client_id': self.client_id,
-                'metrics': eval_result
-            })
-        
-        elif msg_type == 'complete':
-            # Training is complete
-            print("Federated learning process completed.")
-            
-        elif msg_type == 'error':
-            # Server reported an error
-            print(f"Server error: {message.get('message')}")
-    
-    def _train(self):
-        """
-        Train the model on local data.
-        
-        Returns:
-            dict: Training metrics.
-        """
-        print(f"Training with {len(self.x_train)} samples for {self.epochs} epochs")
-        
-        # Setup training
-        start_time = time.time()
-        
-        # Compile the model if it hasn't been compiled yet
+        # Compile model if not already compiled
         if not self.model.optimizer:
             self.model.compile(
                 optimizer='adam',
                 loss='categorical_crossentropy',
                 metrics=['accuracy']
             )
-        
-        # Train the model
-        history = self.model.fit(
-            self.x_train, self.y_train,
-            batch_size=self.batch_size,
-            epochs=self.epochs,
-            verbose=1
-        )
-        
-        # Record training time
-        training_time = time.time() - start_time
-        
-        # Record metrics
-        train_loss = float(history.history['loss'][-1])
-        train_accuracy = float(history.history['accuracy'][-1])
-        
-        self.metrics['train_loss'].append(train_loss)
-        self.metrics['train_accuracy'].append(train_accuracy)
-        self.metrics['training_time'] = training_time
-        
-        # Evaluate on test data if available
-        if self.x_test is not None and self.y_test is not None:
-            test_loss, test_accuracy = self.model.evaluate(
-                self.x_test, self.y_test,
-                verbose=0
-            )
-            self.metrics['test_loss'] = float(test_loss)
-            self.metrics['test_accuracy'] = float(test_accuracy)
-        
-        print(f"Training completed in {training_time:.2f}s")
-        print(f"Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}")
-        
-        return {
-            'train_loss': train_loss,
-            'train_accuracy': train_accuracy,
-            'test_loss': self.metrics['test_loss'],
-            'test_accuracy': self.metrics['test_accuracy'],
-            'training_time': training_time,
-            'samples': len(self.x_train)
-        }
     
-    def _evaluate(self):
-        """
-        Evaluate the model on local test data.
-        
-        Returns:
-            dict: Evaluation metrics.
-        """
-        if self.x_test is None or self.y_test is None:
-            return {'error': 'No test data available'}
-        
-        # Evaluate the model
-        test_loss, test_accuracy = self.model.evaluate(
-            self.x_test, self.y_test,
-            verbose=0
-        )
-        
-        # Update metrics
-        self.metrics['test_loss'] = float(test_loss)
-        self.metrics['test_accuracy'] = float(test_accuracy)
-        
-        print(f"Evaluation - Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
-        
-        return {
-            'test_loss': test_loss,
-            'test_accuracy': test_accuracy,
-            'samples': len(self.x_test)
-        }
+    def start(self):
+        """Start the federated learning client."""
+        self.is_training = True
+        self._register_client()
+        self._training_loop()
     
-    def _send_message(self, message):
-        """
-        Send a message to the server.
-        
-        Args:
-            message: The message to send.
-        """
-        if not self.connected or not self.sock:
-            print("Not connected to server.")
-            return False
-        
-        try:
-            # Convert message to JSON and encode as bytes
-            message_bytes = json.dumps(message).encode('utf-8')
-            
-            # Send message length first, then the message
-            message_length = len(message_bytes)
-            self.sock.sendall(message_length.to_bytes(4, byteorder='big'))
-            self.sock.sendall(message_bytes)
-            
-            return True
-        except Exception as e:
-            print(f"Error sending message: {e}")
-            self.connected = False
-            return False
+    def stop(self):
+        """Stop the federated learning client."""
+        self.is_training = False
     
-    def _receive_message(self):
-        """
-        Receive a message from the server.
+    def _register_client(self):
+        """Register the client with the server."""
+        max_retries = 3
+        retry_delay = 5  # seconds
         
-        Returns:
-            dict: The received message, or None if there was an error.
-        """
-        if not self.connected or not self.sock:
-            print("Not connected to server.")
-            return None
-        
-        try:
-            # Receive message length first (4 bytes)
-            length_bytes = self.sock.recv(4)
-            if not length_bytes:
-                return None
-            
-            message_length = int.from_bytes(length_bytes, byteorder='big')
-            
-            # Receive the full message
-            message_bytes = b''
-            while len(message_bytes) < message_length:
-                chunk = self.sock.recv(min(4096, message_length - len(message_bytes)))
-                if not chunk:
-                    return None
-                message_bytes += chunk
-            
-            # Decode and parse the message
-            message = json.loads(message_bytes.decode('utf-8'))
-            return message
-        except Exception as e:
-            print(f"Error receiving message: {e}")
-            self.connected = False
-            return None
-    
-    def wait(self):
-        """Wait for the client thread to finish."""
-        if self.client_thread and self.client_thread.is_alive():
-            self.client_thread.join()
-    
-    def shutdown(self):
-        """Shutdown the client."""
-        self.running = False
-        if self.sock:
+        for attempt in range(max_retries):
             try:
-                self.sock.shutdown(socket.SHUT_RDWR)
-                self.sock.close()
-            except:
-                pass
-            self.sock = None
-        self.connected = False 
+                print(f"\nAttempting to register client {self.client_id} (attempt {attempt + 1}/{max_retries})")
+                
+                # Prepare registration data with more details
+                registration_data = {
+                    'client_id': self.client_id,
+                    'name': f'Client-{self.client_id}',
+                    'data_size': len(self.x_train),
+                    'device_info': f'Python Client - TensorFlow {tf.__version__}',
+                    'platform': platform.system(),
+                    'machine': platform.machine(),
+                    'processor': platform.processor(),
+                    'python_version': platform.python_version(),
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                print(f"Sending registration data: {registration_data}")
+                
+                # Send registration request
+                response = requests.post(
+                    f"{self.server_url}/api/register_client",
+                    json=registration_data,
+                    headers={
+                        'X-API-Key': self.api_key,
+                        'Content-Type': 'application/json'
+                    }
+                )
+                
+                # Check response
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if response_data.get('status') == 'success':
+                    print(f"Client {self.client_id} registered successfully")
+                    print(f"Server response: {response_data}")
+                    
+                    # Start heartbeat thread
+                    self._start_heartbeat()
+                    return True
+                else:
+                    print(f"Registration failed: {response_data.get('error', 'Unknown error')}")
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"Network error during registration: {e}")
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    print("Max retries reached. Registration failed.")
+                    self.stop()
+                    return False
+                    
+            except Exception as e:
+                print(f"Unexpected error during registration: {e}")
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    print("Max retries reached. Registration failed.")
+                    self.stop()
+                    return False
+        
+        return False
+    
+    def _start_heartbeat(self):
+        """Start sending heartbeat to server."""
+        def heartbeat():
+            while self.is_training:
+                try:
+                    response = requests.post(
+                        f"{self.server_url}/api/clients/{self.client_id}/heartbeat",
+                        headers={'X-API-Key': self.api_key}
+                    )
+                    response.raise_for_status()
+                except:
+                    pass
+                time.sleep(30)  # Send heartbeat every 30 seconds
+        
+        self.heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+        self.heartbeat_thread.start()
+    
+    def _training_loop(self):
+        """Main training loop."""
+        while self.is_training:
+            try:
+                # Get current model weights from server
+                response = requests.get(
+                    f"{self.server_url}/api/clients/{self.client_id}/tasks",
+                    headers={'X-API-Key': self.api_key}
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if data['status'] != 'success':
+                    print(f"Error getting tasks: {data.get('error', 'Unknown error')}")
+                    continue
+
+                # Update model with server weights
+                weights = [np.array(w) for w in data['weights']]
+                self.model.set_weights(weights)
+                self.current_round = data.get('round', 0)
+
+                # Train locally
+                print(f"\nStarting local training for round {self.current_round}")
+                history = self.model.fit(
+                    self.x_train,
+                    self.y_train,
+                    batch_size=self.batch_size,
+                    epochs=self.epochs,
+                    validation_split=0.2,
+                    verbose=1,
+                    callbacks=[MetricCallback(self)]
+                )
+
+                # Evaluate model
+                val_loss, val_accuracy = self.model.evaluate(
+                    self.x_test if self.x_test is not None else self.x_train,
+                    self.y_test if self.y_test is not None else self.y_train,
+                    verbose=0
+                )
+
+                # Send final update to server
+                final_metrics = {
+                    'round': self.current_round,
+                    'epoch': self.epochs,
+                    'total_epochs': self.epochs,
+                    'loss': float(history.history['loss'][-1]),
+                    'accuracy': float(history.history['accuracy'][-1]),
+                    'val_loss': float(val_loss),
+                    'val_accuracy': float(val_accuracy),
+                    'samples': len(self.x_train)
+                }
+
+                response = requests.post(
+                    f"{self.server_url}/api/clients/{self.client_id}/model_update",
+                    json={
+                        'weights': [w.tolist() for w in self.model.get_weights()],
+                        'metrics': final_metrics
+                    },
+                    headers={'X-API-Key': self.api_key}
+                )
+                response.raise_for_status()
+                print(f"Round {self.current_round} completed successfully")
+
+                # Wait for next round
+                time.sleep(5)
+
+            except Exception as e:
+                print(f"Error during training: {e}")
+                time.sleep(5)
+
+class MetricCallback(tf.keras.callbacks.Callback):
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+
+    def on_epoch_end(self, epoch, logs=None):
+        """Send metrics after each epoch."""
+        logs = logs or {}
+        try:
+            # Evaluate on test set if available
+            if self.client.x_test is not None and self.client.y_test is not None:
+                test_results = self.model.evaluate(
+                    self.client.x_test,
+                    self.client.y_test,
+                    verbose=0
+                )
+                test_loss = test_results[0]
+                test_accuracy = test_results[1]
+            else:
+                test_loss = logs.get('val_loss', 0.0)
+                test_accuracy = logs.get('val_accuracy', 0.0)
+
+            # Ensure all metrics are valid numbers
+            metrics = {
+                'round': self.client.current_round,
+                'epoch': epoch + 1,
+                'total_epochs': self.client.epochs,
+                'loss': float(logs.get('loss', 0.0)),
+                'accuracy': float(logs.get('accuracy', 0.0)),
+                'val_loss': float(test_loss),
+                'val_accuracy': float(test_accuracy),
+                'samples': len(self.client.x_train),
+                'client_id': self.client.client_id,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+
+            # Validate metrics before sending
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    if not np.isfinite(value):  # Check for inf/nan
+                        metrics[key] = 0.0
+                        print(f"Warning: Invalid {key} value detected, using 0.0")
+
+            print(f"\nSending metrics to server for round {metrics['round']}, epoch {metrics['epoch']}:")
+            print(f"Loss: {metrics['loss']:.4f}, Accuracy: {metrics['accuracy']:.4f}")
+            print(f"Val Loss: {metrics['val_loss']:.4f}, Val Accuracy: {metrics['val_accuracy']:.4f}")
+
+            response = requests.post(
+                f"{self.client.server_url}/api/clients/{self.client.client_id}/model_update",
+                json={
+                    'weights': [w.tolist() for w in self.model.get_weights()],
+                    'metrics': metrics
+                },
+                headers={'X-API-Key': self.client.api_key}
+            )
+            response.raise_for_status()
+            print("Metrics sent successfully")
+            
+        except Exception as e:
+            print(f"Error sending epoch metrics: {e}")
+            # Continue training even if metrics sending fails
+            pass 

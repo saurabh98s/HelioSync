@@ -2,5 +2,6 @@ setup.py
 federated_learning_client.egg-info/PKG-INFO
 federated_learning_client.egg-info/SOURCES.txt
 federated_learning_client.egg-info/dependency_links.txt
+federated_learning_client.egg-info/entry_points.txt
 federated_learning_client.egg-info/requires.txt
 federated_learning_client.egg-info/top_level.txt

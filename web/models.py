@@ -4,11 +4,12 @@ Database Models
 This module defines the database models for the Federated Learning web interface.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+import hashlib
 
-from web.app import db, login_manager
+from web.extensions import db, login_manager
 
 # Association tables
 project_organizations = db.Table(
@@ -82,6 +83,22 @@ class ApiKey(db.Model):
     # Relationships
     organization = db.relationship('Organization', back_populates='api_keys')
 
+    def __init__(self, **kwargs):
+        """Initialize a new API key."""
+        super(ApiKey, self).__init__(**kwargs)
+        
+        # Set default expiration if not provided
+        if not self.expires_at:
+            self.expires_at = datetime.utcnow() + timedelta(days=365)
+        
+        # Set default created_at if not provided
+        if not self.created_at:
+            self.created_at = datetime.utcnow()
+        
+        # Set default is_active if not provided
+        if self.is_active is None:
+            self.is_active = True
+
     def is_valid(self):
         """Check if the API key is valid (not expired and active)."""
         if not self.is_active:
@@ -90,7 +107,21 @@ class ApiKey(db.Model):
             return False
         return True
 
+    @classmethod
+    def verify_key(cls, key):
+        """Verify an API key and return the associated organization."""
+        if not key:
+            return None
+        
+        # Find the API key in the database directly (it's already hashed)
+        api_key = cls.query.filter_by(key=key).first()
+        
+        if api_key and api_key.is_valid():
+            return api_key.organization
+        return None
+
     def __repr__(self):
+        """String representation of the API key."""
         return f'<ApiKey {self.key[:8]}...>'
 
 
@@ -148,6 +179,10 @@ class Client(db.Model):
     name = db.Column(db.String(100), nullable=False)
     ip_address = db.Column(db.String(50), nullable=True)
     device_info = db.Column(db.String(200), nullable=True)
+    platform = db.Column(db.String(50), nullable=True)  # Operating system platform
+    machine = db.Column(db.String(50), nullable=True)  # Machine architecture
+    python_version = db.Column(db.String(20), nullable=True)  # Python version
+    data_size = db.Column(db.Integer, default=0)  # Size of client's dataset
     is_connected = db.Column(db.Boolean, default=False)
     last_heartbeat = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

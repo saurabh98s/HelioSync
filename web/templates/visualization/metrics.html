@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}Training Metrics{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Training Metrics</h2>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Training Progress</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="trainingProgress"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Client Metrics</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="clientMetrics"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Detailed Metrics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Round</th>
+                                    <th>Loss</th>
+                                    <th>Accuracy</th>
+                                    <th>Connected Clients</th>
+                                </tr>
+                            </thead>
+                            <tbody id="metricsTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let trainingChart;
+let clientChart;
+
+function updateMetrics() {
+    fetch('/api/metrics')
+        .then(response => response.json())
+        .then(data => {
+            // Update training progress chart
+            const ctx = document.getElementById('trainingProgress').getContext('2d');
+            if (!trainingChart) {
+                trainingChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: Array.from({length: data.total_rounds}, (_, i) => i + 1),
+                        datasets: [{
+                            label: 'Training Loss',
+                            data: data.aggregated_metrics.map(m => m.loss),
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1
+                        }, {
+                            label: 'Validation Loss',
+                            data: data.aggregated_metrics.map(m => m.val_loss),
+                            borderColor: 'rgb(255, 99, 132)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            } else {
+                trainingChart.data.datasets[0].data = data.aggregated_metrics.map(m => m.loss);
+                trainingChart.data.datasets[1].data = data.aggregated_metrics.map(m => m.val_loss);
+                trainingChart.update();
+            }
+            
+            // Update client metrics chart
+            const clientCtx = document.getElementById('clientMetrics').getContext('2d');
+            if (!clientChart) {
+                clientChart = new Chart(clientCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys(data.client_metrics),
+                        datasets: [{
+                            label: 'Client Accuracy',
+                            data: Object.values(data.client_metrics).map(m => m.accuracy),
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            borderColor: 'rgb(75, 192, 192)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 1
+                            }
+                        }
+                    }
+                });
+            } else {
+                clientChart.data.labels = Object.keys(data.client_metrics);
+                clientChart.data.datasets[0].data = Object.values(data.client_metrics).map(m => m.accuracy);
+                clientChart.update();
+            }
+            
+            // Update metrics table
+            const tableBody = document.getElementById('metricsTable');
+            tableBody.innerHTML = '';
+            data.aggregated_metrics.forEach((metric, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td>${metric.loss.toFixed(4)}</td>
+                    <td>${(metric.accuracy * 100).toFixed(2)}%</td>
+                    <td>${data.connected_clients}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        })
+        .catch(error => console.error('Error fetching metrics:', error));
+}
+
+// Update metrics every 5 seconds
+setInterval(updateMetrics, 5000);
+updateMetrics(); // Initial update
+</script>
+{% endblock %}
+{% endblock %} 

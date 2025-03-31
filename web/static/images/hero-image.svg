@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="800" height="600" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <rect width="800" height="600" fill="#f8f9fa"/>
+    
+    <!-- Network Nodes -->
+    <g id="nodes">
+        <!-- Central Server -->
+        <circle cx="400" cy="300" r="50" fill="#007bff" opacity="0.8"/>
+        <text x="400" y="305" text-anchor="middle" fill="white" font-family="Arial" font-size="16">Server</text>
+        
+        <!-- Client Nodes -->
+        <circle cx="200" cy="200" r="30" fill="#28a745" opacity="0.8"/>
+        <text x="200" y="205" text-anchor="middle" fill="white" font-family="Arial" font-size="12">Client 1</text>
+        
+        <circle cx="600" cy="200" r="30" fill="#28a745" opacity="0.8"/>
+        <text x="600" y="205" text-anchor="middle" fill="white" font-family="Arial" font-size="12">Client 2</text>
+        
+        <circle cx="200" cy="400" r="30" fill="#28a745" opacity="0.8"/>
+        <text x="200" y="405" text-anchor="middle" fill="white" font-family="Arial" font-size="12">Client 3</text>
+        
+        <circle cx="600" cy="400" r="30" fill="#28a745" opacity="0.8"/>
+        <text x="600" y="405" text-anchor="middle" fill="white" font-family="Arial" font-size="12">Client 4</text>
+    </g>
+    
+    <!-- Connections -->
+    <g id="connections" stroke="#6c757d" stroke-width="2" fill="none">
+        <!-- Server to Client 1 -->
+        <path d="M 400 250 L 200 200" stroke-dasharray="5,5"/>
+        
+        <!-- Server to Client 2 -->
+        <path d="M 400 250 L 600 200" stroke-dasharray="5,5"/>
+        
+        <!-- Server to Client 3 -->
+        <path d="M 400 350 L 200 400" stroke-dasharray="5,5"/>
+        
+        <!-- Server to Client 4 -->
+        <path d="M 400 350 L 600 400" stroke-dasharray="5,5"/>
+    </g>
+    
+    <!-- Data Flow Animation -->
+    <g id="data-flow">
+        <!-- Animated circles representing data flow -->
+        <circle cx="400" cy="300" r="5" fill="#ffc107">
+            <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="200" cy="200" r="5" fill="#ffc107">
+            <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="600" cy="200" r="5" fill="#ffc107">
+            <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="200" cy="400" r="5" fill="#ffc107">
+            <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="600" cy="400" r="5" fill="#ffc107">
+            <animate attributeName="r" values="5;10;5" dur="2s" repeatCount="indefinite"/>
+        </circle>
+    </g>
+</svg> 

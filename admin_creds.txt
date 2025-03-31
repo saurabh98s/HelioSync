@@ -6,3 +6,20 @@ API Key: 7039844b0472d0c6bdf1d4db1c6aa5d46c8be09bf872b6d9
 IMPORTANT: Save this API key as it will not be shown again!
 
 You can now run the application with: python run.py
+
+
+python examples/mnist/run_client.py --server localhost:8080 --client_id client1 --api_key 7039844b0472d0c6bdf1d4db1c6aa5d46c8be09bf872b6d9 --epochs 5 --batch_size 32
+
+
+saurabh
+saurabh_password1
+
+i should be able to ask clients to do certain tasks from the UI of the project description, like if i am working on the MNIST project, each client will have tasks to perform sent by server. and this should be generalist, not just for MNIST but more than that 
+
+python -m fl_client.run_client \
+    --client_id client1 \
+    --api_key 25cc2e20d7281ea64f21969ab37fcb77d29e650c8eaf6a43296448acbc673f8d \
+    --server_url http://localhost:5000 \
+    --batch_size 32 \
+    --epochs 5 \
+    --data_split 0.5

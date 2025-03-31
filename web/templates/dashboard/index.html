@@ -66,7 +66,7 @@
                                     <i class="fas fa-circle"></i> {{ stats.clients.active }} online
                                 </span>
                                 <span class="text-secondary">
-                                    <i class="fas fa-circle"></i> {{ stats.clients.total - stats.clients.active }} offline
+                                    <i class="fas fa-circle"></i> {{ stats.clients.inactive }} offline
                                 </span>
                             </div>
                         </div>
@@ -87,8 +87,11 @@
                                 </div>
                             </div>
                             <div class="mt-2 small">
-                                <span class="text-success">
-                                    <i class="fas fa-circle"></i> {{ stats.models.deployed }} deployed
+                                <span class="text-success me-2">
+                                    <i class="fas fa-circle"></i> {{ stats.models.trained }} trained
+                                </span>
+                                <span class="text-warning">
+                                    <i class="fas fa-circle"></i> {{ stats.models.training }} training
                                 </span>
                             </div>
                         </div>
@@ -102,14 +105,14 @@
                                 <div class="col mr-2">
                                     <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
                                         Organization</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ organization.name }}</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ current_user.organization.name }}</div>
                                 </div>
                                 <div class="col-auto">
                                     <i class="fas fa-building fa-2x text-warning"></i>
                                 </div>
                             </div>
                             <div class="mt-2 small">
-                                <a href="{{ url_for('dashboard.organization') }}" class="text-warning">
+                                <a href="{{ url_for('organizations.view', org_id=current_user.organization.id) }}" class="text-warning">
                                     <i class="fas fa-cog"></i> Manage
                                 </a>
                             </div>
@@ -150,7 +153,7 @@
                                                         </a>
                                                     </td>
                                                     <td>
-                                                        <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'running' else 'secondary' }}">
+                                                        <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'active' else 'secondary' }}">
                                                             {{ project.status }}
                                                         </span>
                                                     </td>
@@ -174,46 +177,42 @@
                     </div>
                 </div>
 
-                <!-- Recent Models -->
+                <!-- Recent Clients -->
                 <div class="col-lg-6 mb-4">
                     <div class="card shadow mb-4">
                         <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                            <h6 class="m-0 font-weight-bold text-primary">Recent Models</h6>
-                            <a href="{{ url_for('dashboard.metrics') }}" class="btn btn-sm btn-primary">
-                                View Metrics
+                            <h6 class="m-0 font-weight-bold text-primary">Recent Clients</h6>
+                            <a href="{{ url_for('dashboard.clients') }}" class="btn btn-sm btn-primary">
+                                View All
                             </a>
                         </div>
                         <div class="card-body">
-                            {% if recent_models %}
+                            {% if recent_clients %}
                                 <div class="table-responsive">
                                     <table class="table table-hover">
                                         <thead>
                                             <tr>
-                                                <th>Project</th>
-                                                <th>Version</th>
-                                                <th>Created</th>
+                                                <th>Name</th>
                                                 <th>Status</th>
+                                                <th>Last Seen</th>
+                                                <th>Created</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {% for model in recent_models %}
+                                            {% for client in recent_clients %}
                                                 <tr>
                                                     <td>
-                                                        <a href="{{ url_for('projects.view', project_id=model.project.id) }}">
-                                                            {{ model.project.name }}
+                                                        <a href="{{ url_for('dashboard.client_detail', client_id=client.id) }}">
+                                                            {{ client.name }}
                                                         </a>
                                                     </td>
-                                                    <td>v{{ model.version }}</td>
-                                                    <td>{{ model.created_at|formatdatetime('%b %d, %Y') }}</td>
                                                     <td>
-                                                        {% if model.is_deployed %}
-                                                            <span class="badge bg-success">Deployed</span>
-                                                        {% elif model.is_final %}
-                                                            <span class="badge bg-primary">Final</span>
-                                                        {% else %}
-                                                            <span class="badge bg-secondary">Training</span>
-                                                        {% endif %}
+                                                        <span class="badge bg-{{ 'success' if client.status == 'active' else 'secondary' }}">
+                                                            {{ client.status }}
+                                                        </span>
                                                     </td>
+                                                    <td>{{ client.last_seen|formatdatetime('%b %d, %Y %H:%M') if client.last_seen else 'Never' }}</td>
+                                                    <td>{{ client.created_at|formatdatetime('%b %d, %Y') }}</td>
                                                 </tr>
                                             {% endfor %}
                                         </tbody>
@@ -221,9 +220,9 @@
                                 </div>
                             {% else %}
                                 <div class="text-center py-4">
-                                    <i class="fas fa-brain fa-3x text-gray-300 mb-3"></i>
-                                    <p class="mb-0">No models trained yet</p>
-                                    <p class="text-muted small mt-2">Models will appear here once training has started</p>
+                                    <i class="fas fa-laptop fa-3x text-gray-300 mb-3"></i>
+                                    <p class="mb-0">No clients connected yet</p>
+                                    <p class="text-muted small mt-2">Clients will appear here once they connect</p>
                                 </div>
                             {% endif %}
                         </div>

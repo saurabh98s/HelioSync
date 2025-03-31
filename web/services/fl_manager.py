@@ -14,10 +14,412 @@ from datetime import datetime
 from flask import current_app
 
 from web.app import db
-from web.models import Project, Client, Model
+from web.models import Project, Client, Model, ProjectClient
 from web.services.model_manager import ModelManager
 
 logger = logging.getLogger(__name__)
+
+class FederatedLearningServer:
+    """Manages the federated learning server and client connections."""
+    
+    def __init__(self):
+        self.clients = {}  # Dictionary to store connected clients
+        self.projects = {}  # Dictionary to store active projects
+        self.client_metrics = {}  # Dictionary to store client metrics
+        self.aggregated_metrics = {}  # Dictionary to store aggregated metrics
+        self.client_projects = {}  # Dictionary to store which projects each client is participating in
+        self.model_weights = {}  # Dictionary to store model weights for each project
+        self.current_round = 0
+        self.rounds = 0
+        self.min_clients = 0
+    
+    def add_client(self, client_id, name, data_size, device_info, platform, machine, python_version):
+        """Add a new client to the FL server."""
+        try:
+            # Register the client in the database and get client info
+            success = self.register_client(
+                client_id=client_id,
+                name=name,
+                data_size=data_size,
+                device_info=device_info,
+                platform=platform,
+                machine=machine,
+                python_version=python_version
+            )
+            
+            if success:
+                # Initialize client's project participation
+                self.client_projects[client_id] = set()
+                logger.info(f"Client {client_id} added successfully to FL server")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error adding client {client_id} to FL server: {str(e)}")
+            return False
+    
+    def remove_client(self, client_id):
+        """Remove a client from the FL server."""
+        try:
+            # Unregister the client
+            success = self.unregister_client(client_id)
+            
+            if success:
+                # Remove client from all projects
+                if client_id in self.client_projects:
+                    for project_id in self.client_projects[client_id]:
+                        self.remove_client_from_project(client_id, project_id)
+                    del self.client_projects[client_id]
+                
+                # Remove client metrics
+                if client_id in self.client_metrics:
+                    del self.client_metrics[client_id]
+                
+                logger.info(f"Client {client_id} removed successfully from FL server")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error removing client {client_id} from FL server: {str(e)}")
+            return False
+    
+    def add_client_to_project(self, client_id, project_id):
+        """Add a client to a specific project."""
+        try:
+            if client_id not in self.clients:
+                logger.error(f"Client {client_id} not found")
+                return False
+            
+            if project_id not in self.projects:
+                logger.error(f"Project {project_id} not found")
+                return False
+            
+            # Add client to project's client set
+            self.client_projects[client_id].add(project_id)
+            
+            # Create project client association in database
+            project_client = ProjectClient(
+                project_id=project_id,
+                client_id=client_id,
+                status='registered',
+                joined_at=datetime.utcnow()
+            )
+            db.session.add(project_client)
+            db.session.commit()
+            
+            logger.info(f"Client {client_id} added to project {project_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding client {client_id} to project {project_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def remove_client_from_project(self, client_id, project_id):
+        """Remove a client from a specific project."""
+        try:
+            if client_id in self.client_projects and project_id in self.client_projects[client_id]:
+                # Remove from project's client set
+                self.client_projects[client_id].remove(project_id)
+                
+                # Update project client status in database
+                project_client = ProjectClient.query.filter_by(
+                    project_id=project_id,
+                    client_id=client_id
+                ).first()
+                
+                if project_client:
+                    project_client.status = 'disconnected'
+                    project_client.disconnected_at = datetime.utcnow()
+                    db.session.commit()
+                
+                logger.info(f"Client {client_id} removed from project {project_id}")
+                return True
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error removing client {client_id} from project {project_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def get_client_projects(self, client_id):
+        """Get all projects a client is participating in."""
+        return list(self.client_projects.get(client_id, set()))
+    
+    def get_project_clients(self, project_id):
+        """Get all clients participating in a project."""
+        return [client_id for client_id, projects in self.client_projects.items() 
+                if project_id in projects]
+    
+    def is_client_in_project(self, client_id, project_id):
+        """Check if a client is participating in a project."""
+        return (client_id in self.client_projects and 
+                project_id in self.client_projects[client_id])
+    
+    def get_client_status(self, client_id):
+        """Get the current status of a client."""
+        if client_id not in self.clients:
+            return None
+        
+        return {
+            'is_connected': True,
+            'last_seen': self.clients[client_id]['last_seen'],
+            'active_projects': self.get_client_projects(client_id)
+        }
+    
+    def get_project_status(self, project_id):
+        """Get the current status of a project."""
+        if project_id not in self.projects:
+            return None
+        
+        return {
+            'active_clients': self.get_project_clients(project_id),
+            'metrics': self.aggregated_metrics.get(project_id, {}),
+            'status': self.projects[project_id].get('status', 'unknown')
+        }
+    
+    def register_client(self, client_id, name, data_size, device_info, platform, machine, python_version):
+        """Register a new client or update existing client information."""
+        try:
+            # Check if client exists
+            client = Client.query.filter_by(client_id=client_id).first()
+            
+            if not client:
+                # Create new client
+                client = Client(
+                    client_id=client_id,
+                    name=name,
+                    data_size=data_size,
+                    device_info=device_info,
+                    platform=platform,
+                    machine=machine,
+                    python_version=python_version,
+                    is_connected=True,
+                    last_seen=datetime.utcnow()
+                )
+                db.session.add(client)
+            else:
+                # Update existing client
+                client.name = name
+                client.data_size = data_size
+                client.device_info = device_info
+                client.platform = platform
+                client.machine = machine
+                client.python_version = python_version
+                client.is_connected = True
+                client.last_seen = datetime.utcnow()
+            
+            db.session.commit()
+            
+            # Add to active clients
+            self.clients[client_id] = {
+                'name': name,
+                'data_size': data_size,
+                'device_info': device_info,
+                'platform': platform,
+                'machine': machine,
+                'python_version': python_version,
+                'last_seen': datetime.utcnow()
+            }
+            
+            logger.info(f"Client {client_id} registered successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error registering client {client_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def unregister_client(self, client_id):
+        """Unregister a client."""
+        try:
+            client = Client.query.filter_by(client_id=client_id).first()
+            if client:
+                client.is_connected = False
+                client.last_seen = datetime.utcnow()
+                db.session.commit()
+            
+            if client_id in self.clients:
+                del self.clients[client_id]
+            
+            logger.info(f"Client {client_id} unregistered successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error unregistering client {client_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def update_client_metrics(self, client_id, project_id, metrics):
+        """Update metrics for a specific client in a project."""
+        try:
+            if client_id not in self.client_metrics:
+                self.client_metrics[client_id] = {}
+            
+            self.client_metrics[client_id][project_id] = {
+                'accuracy': metrics.get('accuracy', 0),
+                'loss': metrics.get('loss', 0),
+                'epochs': metrics.get('epochs', 0),
+                'timestamp': datetime.utcnow()
+            }
+            
+            # Update project client status
+            project_client = ProjectClient.query.filter_by(
+                project_id=project_id,
+                client_id=client_id
+            ).first()
+            
+            if project_client:
+                project_client.status = 'completed'
+                project_client.accuracy = metrics.get('accuracy', 0)
+                project_client.loss = metrics.get('loss', 0)
+                project_client.local_epochs = metrics.get('epochs', 0)
+                project_client.last_update = datetime.utcnow()
+                db.session.commit()
+            
+            logger.info(f"Updated metrics for client {client_id} in project {project_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating metrics for client {client_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def update_aggregated_metrics(self, project_id, metrics):
+        """Update aggregated metrics for a project."""
+        try:
+            self.aggregated_metrics[project_id] = {
+                'accuracy': metrics.get('accuracy', 0),
+                'loss': metrics.get('loss', 0),
+                'round': metrics.get('round', 0),
+                'timestamp': datetime.utcnow()
+            }
+            
+            # Update project status
+            project = Project.query.get(project_id)
+            if project:
+                project.current_round = metrics.get('round', 0)
+                if metrics.get('round', 0) >= project.rounds:
+                    project.status = 'completed'
+                db.session.commit()
+            
+            logger.info(f"Updated aggregated metrics for project {project_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating aggregated metrics for project {project_id}: {str(e)}")
+            db.session.rollback()
+            return False
+    
+    def initialize_project(self, project):
+        """Initialize a project in the FL server."""
+        try:
+            project_id = project.id
+            
+            # Store project settings
+            self.projects[project_id] = {
+                'status': project.status,
+                'framework': project.framework,
+                'dataset': project.dataset_name,
+                'current_round': 0,
+                'total_rounds': project.rounds,
+                'min_clients': project.min_clients
+            }
+            
+            # Initialize project-specific attributes
+            self.current_round = 0
+            self.rounds = project.rounds
+            self.min_clients = project.min_clients
+            
+            # Initialize model based on framework and dataset
+            if project.framework.lower() == 'tensorflow':
+                self.model_weights[project_id] = self._initialize_tensorflow_model(project.dataset_name)
+            else:
+                raise ValueError(f"Unsupported framework: {project.framework}")
+            
+            logger.info(f"Project {project_id} initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error initializing project {project.id}: {str(e)}")
+            return False
+    
+    def _initialize_tensorflow_model(self, dataset_name):
+        """Initialize a TensorFlow model based on the dataset."""
+        try:
+            import tensorflow as tf
+            
+            if dataset_name.lower() == 'mnist':
+                # Create a simple CNN model for MNIST
+                model = tf.keras.Sequential([
+                    tf.keras.layers.Conv2D(32, 3, activation='relu', input_shape=(28, 28, 1)),
+                    tf.keras.layers.MaxPooling2D(),
+                    tf.keras.layers.Flatten(),
+                    tf.keras.layers.Dense(128, activation='relu'),
+                    tf.keras.layers.Dense(10, activation='softmax')
+                ])
+                model.compile(
+                    optimizer='adam',
+                    loss='sparse_categorical_crossentropy',
+                    metrics=['accuracy']
+                )
+                return [layer.get_weights() for layer in model.layers]
+            else:
+                raise ValueError(f"Unsupported dataset: {dataset_name}")
+                
+        except Exception as e:
+            logger.error(f"Error initializing TensorFlow model: {str(e)}")
+            raise
+    
+    def get_model_weights(self, project_id=None):
+        """Get the current model weights."""
+        if project_id is None:
+            # Return weights of the first project if no project_id specified
+            if not self.model_weights:
+                raise ValueError("No projects initialized")
+            return list(self.model_weights.values())[0]
+        
+        if project_id not in self.model_weights:
+            raise ValueError(f"Project {project_id} not initialized")
+        
+        return self.model_weights[project_id]
+    
+    def update_model(self, client_id, weights, metrics, project_id=None):
+        """Update the model with client's weights."""
+        try:
+            if project_id is None:
+                # Update first project if no project_id specified
+                if not self.model_weights:
+                    raise ValueError("No projects initialized")
+                project_id = list(self.model_weights.keys())[0]
+            
+            if project_id not in self.model_weights:
+                raise ValueError(f"Project {project_id} not initialized")
+            
+            # Update client metrics
+            self.update_client_metrics(client_id, project_id, metrics)
+            
+            # For now, just store the latest weights
+            # In a real implementation, you would aggregate weights from multiple clients
+            self.model_weights[project_id] = weights
+            
+            # Update project metrics
+            if project_id not in self.aggregated_metrics:
+                self.aggregated_metrics[project_id] = {}
+            
+            self.aggregated_metrics[project_id].update({
+                'accuracy': metrics.get('accuracy', 0),
+                'loss': metrics.get('loss', 0),
+                'round': self.current_round,
+                'timestamp': datetime.utcnow()
+            })
+            
+            logger.info(f"Updated model for project {project_id} with weights from client {client_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating model: {str(e)}")
+            return False
 
 def start_federated_server(project):
     """
@@ -102,43 +504,24 @@ def start_federated_server(project):
                         # Update project status
                         update_project_status(project.id, current_round)
                         
-                    # Check if training is completed
-                    elif "Training completed" in line:
-                        # Format: "Training completed: accuracy: 0.92, loss: 0.08"
-                        parts = line.split(',')
-                        accuracy = float(parts[0].split(':')[2].strip())
-                        loss = float(parts[1].split(':')[2].strip())
-                        
-                        # Create final model
-                        create_model_version(
-                            project.id, 
-                            accuracy=accuracy, 
-                            loss=loss, 
-                            is_final=True
-                        )
-                        
-                        # Mark project as completed
-                        update_project_status(project.id, project.rounds, status='completed')
+                        # Create model version
+                        accuracy = float(parts[1].split(':')[1].strip())
+                        loss = float(parts[2].split(':')[1].strip())
+                        create_model_version(project.id, accuracy, loss)
                 
-                # Process completed - check exit code
+                # Wait for process to complete
                 proc.wait()
-                if proc.returncode != 0:
-                    logger.error(f"Server process failed with code {proc.returncode}")
-                    for line in proc.stderr:
-                        logger.error(f"Server error: {line.strip()}")
-                    
-                    # Mark project as failed
-                    update_project_status(project.id, project.current_round, status='failed')
-                    return False
                 
-                return True
+                # Update project status to completed
+                project.status = 'completed'
+                db.session.commit()
                 
             except Exception as e:
-                logger.exception(f"Error running federated server: {str(e)}")
-                update_project_status(project.id, project.current_round, status='failed')
-                return False
+                logger.error(f"Error running server for project {project.id}: {str(e)}")
+                project.status = 'error'
+                db.session.commit()
         
-        # Start the server in a background thread
+        # Start server in a thread
         thread = threading.Thread(target=run_server)
         thread.daemon = True
         thread.start()
@@ -146,104 +529,75 @@ def start_federated_server(project):
         return True
         
     except Exception as e:
-        logger.exception(f"Error starting federated server: {str(e)}")
+        logger.error(f"Error starting server for project {project.id}: {str(e)}")
         return False
 
 def update_project_status(project_id, current_round, status=None):
-    """
-    Update the project's status and current round in the database.
-    
-    Args:
-        project_id (int): The project ID
-        current_round (int): The current round number
-        status (str, optional): The project status if changed
-        
-    Returns:
-        bool: True if updated successfully, False otherwise
-    """
+    """Update the status of a project."""
     try:
-        # Get the project
         project = Project.query.get(project_id)
-        if not project:
-            logger.error(f"Project {project_id} not found")
-            return False
-        
-        # Update the round
-        project.current_round = current_round
-        
-        # Update the status if provided
-        if status:
-            project.status = status
-        
-        db.session.commit()
-        logger.info(f"Updated project {project_id} to round {current_round}, status: {project.status}")
-        return True
-        
+        if project:
+            project.current_round = current_round
+            if status:
+                project.status = status
+            db.session.commit()
+            return True
+        return False
     except Exception as e:
-        logger.exception(f"Error updating project status: {str(e)}")
+        logger.error(f"Error updating project status: {str(e)}")
+        db.session.rollback()
         return False
 
 def create_model_version(project_id, accuracy=0, loss=0, clients=0, model_file=None, is_final=False):
-    """
-    Create a new model version in the database.
-    
-    Args:
-        project_id (int): The project ID
-        accuracy (float): The model accuracy
-        loss (float): The model loss
-        clients (int): Number of clients that participated
-        model_file (str): Path to the model file
-        is_final (bool): Whether this is the final model
-        
-    Returns:
-        Model: The created model object or None if failed
-    """
+    """Create a new version of a model."""
     try:
-        # Get the project
         project = Project.query.get(project_id)
         if not project:
-            logger.error(f"Project {project_id} not found")
-            return None
+            return False
         
-        # Create a model object with the provided metrics
-        model_data = {
-            'accuracy': accuracy,
-            'loss': loss,
-            'clients': clients,
-            'model_file': model_file
-        }
+        model = Model(
+            project_id=project_id,
+            version=len(project.models) + 1,
+            accuracy=accuracy,
+            loss=loss,
+            clients_count=clients,
+            is_final=is_final,
+            model_file=model_file
+        )
         
-        # Save the model
-        model = ModelManager.save_model(project, model_data, is_final)
-        
-        logger.info(f"Created model version {model.version} for project {project_id}")
-        return model
+        db.session.add(model)
+        db.session.commit()
+        return True
         
     except Exception as e:
-        logger.exception(f"Error creating model version: {str(e)}")
-        return None
+        logger.error(f"Error creating model version: {str(e)}")
+        db.session.rollback()
+        return False
 
 def deploy_model_as_api(model_id):
-    """
-    Deploy a model as an API.
-    
-    Args:
-        model_id (int): The model ID
-        
-    Returns:
-        dict: The deployment result
-    """
+    """Deploy a model as an API endpoint."""
     try:
-        # Get the model
         model = Model.query.get(model_id)
         if not model:
-            logger.error(f"Model {model_id} not found")
-            return {"success": False, "error": "Model not found"}
+            return False
         
-        # Deploy the model
-        result = ModelManager.deploy_model(model, deploy_type='api')
-        return result
+        # This is a simplified example. In a real world scenario, you would:
+        # 1. Save the model file
+        # 2. Create an API endpoint
+        # 3. Set up authentication
+        # 4. Configure rate limiting
+        
+        model.is_deployed = True
+        model.deployment_info = {
+            'type': 'api',
+            'endpoint': f'/api/models/{model_id}/predict',
+            'created_at': datetime.utcnow()
+        }
+        
+        db.session.commit()
+        return True
         
     except Exception as e:
-        logger.exception(f"Error deploying model as API: {str(e)}")
-        return {"success": False, "error": str(e)} 
+        logger.error(f"Error deploying model as API: {str(e)}")
+        db.session.rollback()
+        return False 

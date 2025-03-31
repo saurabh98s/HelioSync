@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Visualizations{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">{{ project.name }} - Visualizations</h1>
+                <a href="{{ url_for('visualization.index') }}" class="btn btn-secondary">
+                    <i class="fas fa-arrow-left me-2"></i>Back to Projects
+                </a>
+            </div>
+
+            <!-- Project Info -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Project Information</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Description:</strong> {{ project.description or 'No description' }}</p>
+                            <p><strong>Framework:</strong> {{ project.framework }}</p>
+                            <p><strong>Status:</strong> 
+                                <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'active' else 'secondary' }}">
+                                    {{ project.status }}
+                                </span>
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Created:</strong> {{ project.created_at|formatdatetime('%b %d, %Y') }}</p>
+                            <p><strong>Current Round:</strong> {{ project.current_round }} / {{ project.rounds }}</p>
+                            <p><strong>Active Clients:</strong> {{ project.active_clients_count }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Training Metrics -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Training Metrics</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Loss Over Time</h5>
+                                    <canvas id="lossChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Accuracy Over Time</h5>
+                                    <canvas id="accuracyChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Client Performance -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Client Performance</h6>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Client Name</th>
+                                    <th>Status</th>
+                                    <th>Local Epochs</th>
+                                    <th>Training Samples</th>
+                                    <th>Last Update</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for pc in project.project_clients %}
+                                    <tr>
+                                        <td>{{ pc.client.name }}</td>
+                                        <td>
+                                            <span class="badge bg-{{ 'success' if pc.status == 'completed' else 'warning' if pc.status == 'training' else 'secondary' }}">
+                                                {{ pc.status }}
+                                            </span>
+                                        </td>
+                                        <td>{{ pc.local_epochs }}</td>
+                                        <td>{{ pc.training_samples }}</td>
+                                        <td>{{ pc.last_update|formatdatetime('%b %d, %Y %H:%M') if pc.last_update else 'Never' }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+</style>
+{% endblock %}
+
+{% block additional_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Initialize charts with data from the backend
+    document.addEventListener('DOMContentLoaded', function() {
+        // Loss Chart
+        const lossCtx = document.getElementById('lossChart').getContext('2d');
+        new Chart(lossCtx, {
+            type: 'line',
+            data: {
+                labels: {{ project.metrics.loss.labels|tojson }},
+                datasets: [{
+                    label: 'Training Loss',
+                    data: {{ project.metrics.loss.values|tojson }},
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // Accuracy Chart
+        const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
+        new Chart(accuracyCtx, {
+            type: 'line',
+            data: {
+                labels: {{ project.metrics.accuracy.labels|tojson }},
+                datasets: [{
+                    label: 'Training Accuracy',
+                    data: {{ project.metrics.accuracy.values|tojson }},
+                    borderColor: 'rgb(54, 162, 235)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 1
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock %} 

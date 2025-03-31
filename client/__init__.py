@@ -1,5 +1,8 @@
 """
-Federated Learning - Client Package
+Client package for federated learning.
+"""
 
-This package contains the client-side implementation of the federated learning system.
-""" 
+from .models.tf_models import create_mnist_model
+from .data_loader import load_dataset
+
+__all__ = ['create_mnist_model', 'load_dataset'] 

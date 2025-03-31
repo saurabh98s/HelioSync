@@ -312,6 +312,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="post" action="{{ url_for('dashboard.create_api_key') }}">
+                {{ form.csrf_token }}
                 <div class="modal-body">
                     <p>Creating a new API key will allow clients to connect to your organization.</p>
                     <div class="form-check mb-3">
@@ -343,6 +344,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="post" action="{{ url_for('dashboard.revoke_api_key') }}">
+                {{ form.csrf_token }}
                 <input type="hidden" name="key_id" id="revokeKeyId">
                 <div class="modal-body">
                     <p>Are you sure you want to revoke the API key <code id="revokeKeyPrefix"></code>?</p>
@@ -366,6 +368,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="post" action="{{ url_for('dashboard.update_organization') }}">
+                {{ form.csrf_token }}
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="orgName" class="form-label">Organization Name</label>
@@ -394,6 +397,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="post" action="{{ url_for('dashboard.invite_user') }}">
+                {{ form.csrf_token }}
                 <div class="modal-body">
                     <div class="mb-3">
                         <label for="inviteEmail" class="form-label">Email Address</label>
@@ -429,6 +433,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <form method="post" action="{{ url_for('dashboard.remove_user') }}">
+                {{ form.csrf_token }}
                 <input type="hidden" name="user_id" id="removeUserId">
                 <div class="modal-body">
                     <p>Are you sure you want to remove <strong id="removeUsername"></strong> from this organization?</p>

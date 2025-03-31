@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} - Project Metrics{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Sidebar -->
+        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
+            {% include 'dashboard/_sidebar.html' %}
+        </div>
+        
+        <!-- Main Content -->
+        <div class="col-lg-10 col-md-9 ms-auto px-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h1 class="h2">{{ project.name }} - Project Metrics</h1>
+                <div>
+                    <a href="{{ url_for('projects.view', project_id=project.id) }}" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-2"></i>Back to Project
+                    </a>
+                </div>
+            </div>
+
+            <!-- Project Overview -->
+            <div class="row mb-4">
+                <div class="col-xl-3 col-md-6 mb-4">
+                    <div class="card border-left-primary shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="row no-gutters align-items-center">
+                                <div class="col mr-2">
+                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                        Current Round</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ project.current_round }}/{{ project.rounds }}</div>
+                                </div>
+                                <div class="col-auto">
+                                    <i class="fas fa-sync fa-2x text-gray-300"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6 mb-4">
+                    <div class="card border-left-success shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="row no-gutters align-items-center">
+                                <div class="col mr-2">
+                                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                        Active Clients</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ project.active_clients_count }}</div>
+                                </div>
+                                <div class="col-auto">
+                                    <i class="fas fa-users fa-2x text-gray-300"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6 mb-4">
+                    <div class="card border-left-info shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="row no-gutters align-items-center">
+                                <div class="col mr-2">
+                                    <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                                        Global Accuracy</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ "%.2f"|format(accuracy_data.global[-1] * 100) }}%</div>
+                                </div>
+                                <div class="col-auto">
+                                    <i class="fas fa-chart-line fa-2x text-gray-300"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-xl-3 col-md-6 mb-4">
+                    <div class="card border-left-warning shadow h-100 py-2">
+                        <div class="card-body">
+                            <div class="row no-gutters align-items-center">
+                                <div class="col mr-2">
+                                    <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                                        Global Loss</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ "%.4f"|format(loss_data.global[-1]) }}</div>
+                                </div>
+                                <div class="col-auto">
+                                    <i class="fas fa-chart-bar fa-2x text-gray-300"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accuracy Chart -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Accuracy Over Time</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="accuracyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Loss Chart -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Loss Over Time</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="lossChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Client Participation Chart -->
+            <div class="card shadow mb-4">
+                <div class="card-header py-3">
+                    <h6 class="m-0 font-weight-bold text-primary">Client Participation</h6>
+                </div>
+                <div class="card-body">
+                    <canvas id="participationChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .sidebar {
+        background-color: #f8f9fc;
+        min-height: calc(100vh - 70px);
+        border-right: 1px solid #e3e6f0;
+    }
+    .border-left-primary {
+        border-left: 4px solid #4e73df !important;
+    }
+    .border-left-success {
+        border-left: 4px solid #1cc88a !important;
+    }
+    .border-left-info {
+        border-left: 4px solid #36b9cc !important;
+    }
+    .border-left-warning {
+        border-left: 4px solid #f6c23e !important;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Accuracy Chart
+    const accuracyCtx = document.getElementById('accuracyChart').getContext('2d');
+    new Chart(accuracyCtx, {
+        type: 'line',
+        data: {
+            labels: {{ dates|tojson }},
+            datasets: [
+                {
+                    label: 'Global Model',
+                    data: {{ accuracy_data.global|tojson }},
+                    borderColor: '#4e73df',
+                    backgroundColor: 'rgba(78, 115, 223, 0.05)',
+                    fill: true
+                },
+                {% for i in range(project.min_clients) %}
+                {
+                    label: 'Client {{ i + 1 }}',
+                    data: {{ accuracy_data.clients[i]|tojson }},
+                    borderColor: 'rgba(78, 115, 223, 0.3)',
+                    backgroundColor: 'rgba(78, 115, 223, 0.05)',
+                    fill: false
+                }{% if not loop.last %},{% endif %}
+                {% endfor %}
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1
+                }
+            }
+        }
+    });
+
+    // Loss Chart
+    const lossCtx = document.getElementById('lossChart').getContext('2d');
+    new Chart(lossCtx, {
+        type: 'line',
+        data: {
+            labels: {{ dates|tojson }},
+            datasets: [
+                {
+                    label: 'Global Model',
+                    data: {{ loss_data.global|tojson }},
+                    borderColor: '#e74a3b',
+                    backgroundColor: 'rgba(231, 74, 59, 0.05)',
+                    fill: true
+                },
+                {% for i in range(project.min_clients) %}
+                {
+                    label: 'Client {{ i + 1 }}',
+                    data: {{ loss_data.clients[i]|tojson }},
+                    borderColor: 'rgba(231, 74, 59, 0.3)',
+                    backgroundColor: 'rgba(231, 74, 59, 0.05)',
+                    fill: false
+                }{% if not loop.last %},{% endif %}
+                {% endfor %}
+            ]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+
+    // Participation Chart
+    const participationCtx = document.getElementById('participationChart').getContext('2d');
+    new Chart(participationCtx, {
+        type: 'bar',
+        data: {
+            labels: {{ participation_data.dates|tojson }},
+            datasets: [{
+                label: 'Active Clients',
+                data: {{ participation_data.values|tojson }},
+                backgroundColor: '#1cc88a'
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %} 

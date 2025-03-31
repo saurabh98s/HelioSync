@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">Training Metrics Dashboard</h1>
+        </div>
+    </div>
+
+    <!-- Training Progress -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Training Progress</h5>
+                </div>
+                <div class="card-body">
+                    <div class="progress mb-3">
+                        <div class="progress-bar" role="progressbar" 
+                             style="width: {{ (metrics.current_round / metrics.total_rounds * 100) if metrics.total_rounds else 0 }}%">
+                            Round {{ metrics.current_round }}/{{ metrics.total_rounds }}
+                        </div>
+                    </div>
+                    <p>Connected Clients: {{ metrics.connected_clients }}/{{ metrics.min_clients }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metrics Charts -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Training Loss</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="lossChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Training Accuracy</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="accuracyChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Round Metrics Table -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Round Metrics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Round</th>
+                                    <th>Clients</th>
+                                    <th>Average Loss</th>
+                                    <th>Average Accuracy</th>
+                                    <th>Validation Loss</th>
+                                    <th>Validation Accuracy</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for round_num, round_data in metrics.round_metrics.items() %}
+                                <tr>
+                                    <td>{{ round_num }}</td>
+                                    <td>{{ round_data|length }}</td>
+                                    <td>
+                                        {% set total_loss = 0 %}
+                                        {% for metric in round_data %}
+                                            {% set total_loss = total_loss + metric.loss %}
+                                        {% endfor %}
+                                        {{ "%.4f"|format(total_loss / round_data|length) if round_data else "-" }}
+                                    </td>
+                                    <td>
+                                        {% set total_acc = 0 %}
+                                        {% for metric in round_data %}
+                                            {% set total_acc = total_acc + metric.accuracy %}
+                                        {% endfor %}
+                                        {{ "%.4f"|format(total_acc / round_data|length) if round_data else "-" }}
+                                    </td>
+                                    <td>
+                                        {% set total_val_loss = 0 %}
+                                        {% for metric in round_data %}
+                                            {% set total_val_loss = total_val_loss + metric.val_loss %}
+                                        {% endfor %}
+                                        {{ "%.4f"|format(total_val_loss / round_data|length) if round_data else "-" }}
+                                    </td>
+                                    <td>
+                                        {% set total_val_acc = 0 %}
+                                        {% for metric in round_data %}
+                                            {% set total_val_acc = total_val_acc + metric.val_accuracy %}
+                                        {% endfor %}
+                                        {{ "%.4f"|format(total_val_acc / round_data|length) if round_data else "-" }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Prepare data for charts
+    const roundData = {{ metrics.round_metrics|tojson }};
+    const rounds = Object.keys(roundData).sort((a, b) => a - b);
+    
+    // Calculate average metrics for each round
+    const avgLoss = rounds.map(round => {
+        const metrics = roundData[round];
+        return metrics.reduce((sum, m) => sum + m.loss, 0) / metrics.length;
+    });
+    
+    const avgAccuracy = rounds.map(round => {
+        const metrics = roundData[round];
+        return metrics.reduce((sum, m) => sum + m.accuracy, 0) / metrics.length;
+    });
+    
+    // Create loss chart
+    new Chart(document.getElementById('lossChart'), {
+        type: 'line',
+        data: {
+            labels: rounds,
+            datasets: [{
+                label: 'Training Loss',
+                data: avgLoss,
+                borderColor: 'rgb(75, 192, 192)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true
+                }
+            }
+        }
+    });
+    
+    // Create accuracy chart
+    new Chart(document.getElementById('accuracyChart'), {
+        type: 'line',
+        data: {
+            labels: rounds,
+            datasets: [{
+                label: 'Training Accuracy',
+                data: avgAccuracy,
+                borderColor: 'rgb(54, 162, 235)',
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1
+                }
+            }
+        }
+    });
+
+    // Auto-refresh the page every 30 seconds
+    setInterval(() => {
+        location.reload();
+    }, 30000);
+});
+</script>
+{% endblock %}
+{% endblock %} 

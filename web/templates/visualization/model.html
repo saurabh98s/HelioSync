@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}Model Architecture{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Model Architecture</h2>
+    
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Model Summary</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Layer Name</th>
+                                    <th>Layer Type</th>
+                                    <th>Output Shape</th>
+                                    <th>Parameters</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modelTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Model Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <ul class="list-group">
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Total Parameters
+                            <span id="totalParams" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Input Shape
+                            <span id="inputShape" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Output Shape
+                            <span id="outputShape" class="badge bg-primary rounded-pill"></span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Layer Distribution</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="layerDistribution"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let layerChart;
+
+function updateModelInfo() {
+    fetch('/api/model')
+        .then(response => response.json())
+        .then(data => {
+            // Update model table
+            const tableBody = document.getElementById('modelTable');
+            tableBody.innerHTML = '';
+            data.layers.forEach(layer => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${layer.name}</td>
+                    <td>${layer.type}</td>
+                    <td>${JSON.stringify(layer.output_shape)}</td>
+                    <td>${layer.params.toLocaleString()}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+            
+            // Update model statistics
+            document.getElementById('totalParams').textContent = data.total_params.toLocaleString();
+            document.getElementById('inputShape').textContent = JSON.stringify(data.input_shape);
+            document.getElementById('outputShape').textContent = JSON.stringify(data.output_shape);
+            
+            // Update layer distribution chart
+            const ctx = document.getElementById('layerDistribution').getContext('2d');
+            if (!layerChart) {
+                layerChart = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: data.layers.map(l => l.type),
+                        datasets: [{
+                            data: data.layers.map(l => l.params),
+                            backgroundColor: [
+                                'rgba(255, 99, 132, 0.2)',
+                                'rgba(54, 162, 235, 0.2)',
+                                'rgba(255, 206, 86, 0.2)',
+                                'rgba(75, 192, 192, 0.2)',
+                                'rgba(153, 102, 255, 0.2)'
+                            ],
+                            borderColor: [
+                                'rgba(255, 99, 132, 1)',
+                                'rgba(54, 162, 235, 1)',
+                                'rgba(255, 206, 86, 1)',
+                                'rgba(75, 192, 192, 1)',
+                                'rgba(153, 102, 255, 1)'
+                            ],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'right'
+                            }
+                        }
+                    }
+                });
+            } else {
+                layerChart.data.labels = data.layers.map(l => l.type);
+                layerChart.data.datasets[0].data = data.layers.map(l => l.params);
+                layerChart.update();
+            }
+        })
+        .catch(error => console.error('Error fetching model info:', error));
+}
+
+// Update model info every 30 seconds
+setInterval(updateModelInfo, 30000);
+updateModelInfo(); // Initial update
+</script>
+{% endblock %}
+{% endblock %} 
