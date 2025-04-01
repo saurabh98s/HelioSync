@@ -131,7 +131,7 @@ if client.start():
     client.run()
 ```
 
-## Example Projects
+## Example Projects (TODO)
 
 ### MNIST Handwritten Digits
 
