@@ -185,60 +185,98 @@ class FederatedClient:
                 response.raise_for_status()
                 data = response.json()
 
-                if data['status'] != 'success':
-                    print(f"Error getting tasks: {data.get('error', 'Unknown error')}")
+                # Handle different status responses from server
+                status = data.get('status')
+                
+                if status == 'error':
+                    print(f"Error from server: {data.get('message', 'Unknown error')}")
+                    if 'details' in data and isinstance(data['details'], dict):
+                        print(f"Details: {data['details']}")
+                    time.sleep(5)
                     continue
+                    
+                elif status == 'waiting':
+                    print(f"Waiting: {data.get('message', 'No tasks available')}")
+                    if 'details' in data and isinstance(data['details'], dict):
+                        print(f"Details: {data['details']}")
+                    time.sleep(5)
+                    continue
+                    
+                elif status == 'training':
+                    print(f"Training task received: {data.get('message', '')}")
+                    details = data.get('details', {})
+                    
+                    # Extract training details
+                    project_id = details.get('project_id')
+                    project_name = details.get('project_name')
+                    current_round = details.get('round', 0)
+                    total_rounds = details.get('total_rounds', 0)
+                    weights = details.get('weights', [])
+                    
+                    print(f"Training for project: {project_name} (ID: {project_id})")
+                    print(f"Round {current_round}/{total_rounds}")
+                    
+                    # Update model with server weights
+                    self.model.set_weights([np.array(w) for w in weights])
+                    self.current_round = current_round
+                    
+                    # Train locally
+                    print(f"\nStarting local training for round {self.current_round}")
+                    history = self.model.fit(
+                        self.x_train,
+                        self.y_train,
+                        batch_size=self.batch_size,
+                        epochs=self.epochs,
+                        validation_split=0.2,
+                        verbose=1,
+                        callbacks=[MetricCallback(self)]
+                    )
 
-                # Update model with server weights
-                weights = [np.array(w) for w in data['weights']]
-                self.model.set_weights(weights)
-                self.current_round = data.get('round', 0)
+                    # Evaluate model
+                    val_loss, val_accuracy = self.model.evaluate(
+                        self.x_test if self.x_test is not None else self.x_train,
+                        self.y_test if self.y_test is not None else self.y_train,
+                        verbose=0
+                    )
 
-                # Train locally
-                print(f"\nStarting local training for round {self.current_round}")
-                history = self.model.fit(
-                    self.x_train,
-                    self.y_train,
-                    batch_size=self.batch_size,
-                    epochs=self.epochs,
-                    validation_split=0.2,
-                    verbose=1,
-                    callbacks=[MetricCallback(self)]
-                )
+                    # Send final update to server
+                    final_metrics = {
+                        'round': self.current_round,
+                        'epoch': self.epochs,
+                        'total_epochs': self.epochs,
+                        'loss': float(history.history['loss'][-1]),
+                        'accuracy': float(history.history['accuracy'][-1]),
+                        'val_loss': float(val_loss),
+                        'val_accuracy': float(val_accuracy),
+                        'samples': len(self.x_train),
+                        'project_id': project_id
+                    }
 
-                # Evaluate model
-                val_loss, val_accuracy = self.model.evaluate(
-                    self.x_test if self.x_test is not None else self.x_train,
-                    self.y_test if self.y_test is not None else self.y_train,
-                    verbose=0
-                )
-
-                # Send final update to server
-                final_metrics = {
-                    'round': self.current_round,
-                    'epoch': self.epochs,
-                    'total_epochs': self.epochs,
-                    'loss': float(history.history['loss'][-1]),
-                    'accuracy': float(history.history['accuracy'][-1]),
-                    'val_loss': float(val_loss),
-                    'val_accuracy': float(val_accuracy),
-                    'samples': len(self.x_train)
-                }
-
-                response = requests.post(
-                    f"{self.server_url}/api/clients/{self.client_id}/model_update",
-                    json={
-                        'weights': [w.tolist() for w in self.model.get_weights()],
-                        'metrics': final_metrics
-                    },
-                    headers={'X-API-Key': self.api_key}
-                )
-                response.raise_for_status()
-                print(f"Round {self.current_round} completed successfully")
-
-                # Wait for next round
+                    response = requests.post(
+                        f"{self.server_url}/api/clients/{self.client_id}/model_update",
+                        json={
+                            'weights': [w.tolist() for w in self.model.get_weights()],
+                            'metrics': final_metrics
+                        },
+                        headers={'X-API-Key': self.api_key}
+                    )
+                    response.raise_for_status()
+                    update_response = response.json()
+                    if update_response.get('status') == 'success':
+                        print(f"Round {self.current_round} completed successfully")
+                    else:
+                        print(f"Update response: {update_response}")
+                
+                else:
+                    print(f"Unknown status from server: {status}")
+                    print(f"Response data: {data}")
+                
+                # Wait before checking for the next task
                 time.sleep(5)
 
+            except requests.exceptions.RequestException as e:
+                print(f"Network error during training: {e}")
+                time.sleep(5)
             except Exception as e:
                 print(f"Error during training: {e}")
                 time.sleep(5)

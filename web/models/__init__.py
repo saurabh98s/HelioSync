@@ -135,6 +135,12 @@ class Project(db.Model):
     def __repr__(self):
         return f'<Project {self.name}>'
 
+    def can_access(self, user):
+        """Check if a user has access to this project."""
+        if user.is_admin:
+            return True
+        return any(org.id == user.organization_id for org in self.organizations)
+
 
 class Client(db.Model):
     """Client model for federated learning clients."""

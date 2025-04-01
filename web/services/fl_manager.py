@@ -12,6 +12,7 @@ import subprocess
 import threading
 from datetime import datetime
 from flask import current_app
+import numpy as np
 
 from web.app import db
 from web.models import Project, Client, Model, ProjectClient
@@ -179,39 +180,9 @@ class FederatedLearningServer:
         }
     
     def register_client(self, client_id, name, data_size, device_info, platform, machine, python_version):
-        """Register a new client or update existing client information."""
+        """Register a client in the FL server."""
         try:
-            # Check if client exists
-            client = Client.query.filter_by(client_id=client_id).first()
-            
-            if not client:
-                # Create new client
-                client = Client(
-                    client_id=client_id,
-                    name=name,
-                    data_size=data_size,
-                    device_info=device_info,
-                    platform=platform,
-                    machine=machine,
-                    python_version=python_version,
-                    is_connected=True,
-                    last_seen=datetime.utcnow()
-                )
-                db.session.add(client)
-            else:
-                # Update existing client
-                client.name = name
-                client.data_size = data_size
-                client.device_info = device_info
-                client.platform = platform
-                client.machine = machine
-                client.python_version = python_version
-                client.is_connected = True
-                client.last_seen = datetime.utcnow()
-            
-            db.session.commit()
-            
-            # Add to active clients
+            # Store client information
             self.clients[client_id] = {
                 'name': name,
                 'data_size': data_size,
@@ -222,32 +193,28 @@ class FederatedLearningServer:
                 'last_seen': datetime.utcnow()
             }
             
-            logger.info(f"Client {client_id} registered successfully")
+            # Initialize client metrics
+            self.client_metrics[client_id] = {}
+            
+            logger.info(f"Client {client_id} registered with FL server")
             return True
             
         except Exception as e:
             logger.error(f"Error registering client {client_id}: {str(e)}")
-            db.session.rollback()
             return False
     
     def unregister_client(self, client_id):
-        """Unregister a client."""
+        """Unregister a client from the FL server."""
         try:
-            client = Client.query.filter_by(client_id=client_id).first()
-            if client:
-                client.is_connected = False
-                client.last_seen = datetime.utcnow()
-                db.session.commit()
-            
             if client_id in self.clients:
                 del self.clients[client_id]
-            
-            logger.info(f"Client {client_id} unregistered successfully")
-            return True
+                logger.info(f"Client {client_id} unregistered from FL server")
+                return True
+            logger.warning(f"Client {client_id} not found for unregistration")
+            return False
             
         except Exception as e:
             logger.error(f"Error unregistering client {client_id}: {str(e)}")
-            db.session.rollback()
             return False
     
     def update_client_metrics(self, client_id, project_id, metrics):
@@ -345,36 +312,86 @@ class FederatedLearningServer:
             return False
     
     def _initialize_tensorflow_model(self, dataset_name):
-        """Initialize a TensorFlow model based on the dataset."""
-        try:
-            import tensorflow as tf
+        """Initialize a TensorFlow model based on dataset.
+        
+        Args:
+            dataset_name: Name of the dataset to use.
             
-            if dataset_name.lower() == 'mnist':
-                # Create a simple CNN model for MNIST
-                model = tf.keras.Sequential([
-                    tf.keras.layers.Conv2D(32, 3, activation='relu', input_shape=(28, 28, 1)),
-                    tf.keras.layers.MaxPooling2D(),
-                    tf.keras.layers.Flatten(),
-                    tf.keras.layers.Dense(128, activation='relu'),
-                    tf.keras.layers.Dense(10, activation='softmax')
-                ])
-                model.compile(
-                    optimizer='adam',
-                    loss='sparse_categorical_crossentropy',
-                    metrics=['accuracy']
-                )
-                return [layer.get_weights() for layer in model.layers]
-            else:
-                raise ValueError(f"Unsupported dataset: {dataset_name}")
-                
-        except Exception as e:
-            logger.error(f"Error initializing TensorFlow model: {str(e)}")
-            raise
+        Returns:
+            List of numpy arrays representing model weights.
+        """
+        # Create mock model weights for testing purposes
+        # In a real implementation, you would actually load or create a real model
+        
+        # MNIST weights structure (simple CNN)
+        if dataset_name.lower() == 'mnist':
+            # Conv1 (28x28x1 -> 26x26x32)
+            conv1_w = np.random.randn(3, 3, 1, 32).astype(np.float32) * 0.1
+            conv1_b = np.zeros(32, dtype=np.float32)
+            
+            # Conv2 (26x26x32 -> 24x24x64)
+            conv2_w = np.random.randn(3, 3, 32, 64).astype(np.float32) * 0.1
+            conv2_b = np.zeros(64, dtype=np.float32)
+            
+            # Dense (9216 -> 128)
+            dense1_w = np.random.randn(9216, 128).astype(np.float32) * 0.1
+            dense1_b = np.zeros(128, dtype=np.float32)
+            
+            # Output (128 -> 10)
+            output_w = np.random.randn(128, 10).astype(np.float32) * 0.1
+            output_b = np.zeros(10, dtype=np.float32)
+            
+            weights = [conv1_w, conv1_b, conv2_w, conv2_b, dense1_w, dense1_b, output_w, output_b]
+            logger.info(f"Initialized mock MNIST model weights")
+            
+        # CIFAR-10 weights structure (simple CNN)
+        elif dataset_name.lower() == 'cifar10':
+            # Conv1 (32x32x3 -> 30x30x32)
+            conv1_w = np.random.randn(3, 3, 3, 32).astype(np.float32) * 0.1
+            conv1_b = np.zeros(32, dtype=np.float32)
+            
+            # Conv2 (30x30x32 -> 28x28x64)
+            conv2_w = np.random.randn(3, 3, 32, 64).astype(np.float32) * 0.1
+            conv2_b = np.zeros(64, dtype=np.float32)
+            
+            # Dense (16384 -> 128)
+            dense1_w = np.random.randn(16384, 128).astype(np.float32) * 0.1
+            dense1_b = np.zeros(128, dtype=np.float32)
+            
+            # Output (128 -> 10)
+            output_w = np.random.randn(128, 10).astype(np.float32) * 0.1
+            output_b = np.zeros(10, dtype=np.float32)
+            
+            weights = [conv1_w, conv1_b, conv2_w, conv2_b, dense1_w, dense1_b, output_w, output_b]
+            logger.info(f"Initialized mock CIFAR-10 model weights")
+            
+        # Fallback to simple model for other datasets
+        else:
+            logger.warning(f"No specific model for dataset {dataset_name}, using generic model")
+            # Simple 784 -> 128 -> 10 model for any dataset
+            weights = [
+                np.random.randn(784, 128).astype(np.float32) * 0.1,  # Dense1 weights
+                np.zeros(128, dtype=np.float32),                      # Dense1 bias
+                np.random.randn(128, 10).astype(np.float32) * 0.1,   # Output weights
+                np.zeros(10, dtype=np.float32)                        # Output bias
+            ]
+            
+        return weights
     
     def get_model_weights(self, project_id=None):
-        """Get the current model weights."""
+        """Get the current model weights for a project.
+        
+        Args:
+            project_id: Project ID to get weights for. If None, returns weights for first project.
+            
+        Returns:
+            Model weights as a list of numpy arrays.
+            
+        Raises:
+            ValueError: If no projects are initialized or project_id is not found.
+        """
         if project_id is None:
-            # Return weights of the first project if no project_id specified
+            # Return first project if no project_id specified
             if not self.model_weights:
                 raise ValueError("No projects initialized")
             return list(self.model_weights.values())[0]

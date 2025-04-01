@@ -5,7 +5,7 @@ This module handles routes for managing federated learning projects.
 """
 
 from datetime import datetime
-from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, send_file, jsonify
+from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, send_file, jsonify, current_app
 from flask_login import login_required, current_user
 
 from web.app import db
@@ -91,7 +91,7 @@ def edit(project_id):
 
 @projects_bp.route('/<int:project_id>/start', methods=['POST'])
 @login_required
-def start_project(project_id):
+def start(project_id):
     """Start a federated learning project."""
     project = Project.query.get_or_404(project_id)
     

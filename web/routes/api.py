@@ -158,19 +158,30 @@ def get_client_tasks(client_id):
         fl_server = current_app.fl_server
         
         if not fl_server:
-            return jsonify({"error": "Federated learning server not initialized"}), 500
+            return jsonify({
+                "status": "error",
+                "message": "Federated learning server not initialized"
+            }), 500
         
         # Check if client is registered
         client = Client.query.filter_by(client_id=client_id).first()
         if not client:
-            return jsonify({"error": "Client not found"}), 404
+            return jsonify({
+                "status": "error",
+                "message": "Client not found"
+            }), 404
         
         # Get client's active projects
         active_projects = fl_server.get_client_projects(client_id)
         if not active_projects:
             return jsonify({
                 "status": "waiting",
-                "message": "No active projects available"
+                "message": "No active projects available. Please wait for project assignment.",
+                "details": {
+                    "client_id": client_id,
+                    "is_connected": client.is_connected,
+                    "last_heartbeat": client.last_heartbeat.isoformat() if client.last_heartbeat else None
+                }
             })
         
         # For now, we'll use the first active project
@@ -178,10 +189,23 @@ def get_client_tasks(client_id):
         project_id = active_projects[0]
         project = Project.query.get(project_id)
         
-        if not project or project.status != 'running':
+        if not project:
+            return jsonify({
+                "status": "error",
+                "message": f"Project {project_id} not found"
+            }), 404
+        
+        if project.status != 'running':
             return jsonify({
                 "status": "waiting",
-                "message": "Project is not running"
+                "message": f"Project {project.name} is not currently running",
+                "details": {
+                    "project_id": project_id,
+                    "project_name": project.name,
+                    "project_status": project.status,
+                    "current_round": project.current_round,
+                    "total_rounds": project.rounds
+                }
             })
         
         try:
@@ -190,104 +214,201 @@ def get_client_tasks(client_id):
             
             return jsonify({
                 "status": "training",
-                "project_id": project_id,
-                "round": fl_server.current_round,
-                "weights": weights,
-                "total_rounds": project.rounds,
-                "framework": project.framework,
-                "dataset": project.dataset_name
+                "message": "Training task available",
+                "details": {
+                    "project_id": project_id,
+                    "project_name": project.name,
+                    "round": fl_server.current_round,
+                    "total_rounds": project.rounds,
+                    "framework": project.framework,
+                    "dataset": project.dataset_name,
+                    "weights": weights
+                }
             })
             
         except Exception as e:
             current_app.logger.error(f"Error getting model weights: {str(e)}")
             return jsonify({
-                "error": "Error getting model weights",
-                "details": str(e)
+                "status": "error",
+                "message": "Error getting model weights",
+                "details": {
+                    "error": str(e),
+                    "project_id": project_id,
+                    "project_name": project.name
+                }
             }), 500
             
     except Exception as e:
         current_app.logger.error(f"Error getting client tasks: {str(e)}")
         return jsonify({
-            "error": "Internal server error",
-            "details": str(e)
+            "status": "error",
+            "message": "Internal server error",
+            "details": {
+                "error": str(e),
+                "client_id": client_id
+            }
         }), 500
 
 @api_bp.route('/clients/<client_id>/model_update', methods=['POST'])
 @require_api_key
 def update_model(client_id):
     """Handle model updates from clients."""
-    data = request.get_json()
-    
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
-    
-    if 'weights' not in data:
-        return jsonify({"error": "weights are required"}), 400
-        
-    if 'metrics' not in data or not isinstance(data['metrics'], dict):
-        return jsonify({"error": "valid metrics dictionary is required"}), 400
-    
-    # Get the federated learning server instance
-    fl_server = current_app.fl_server
-    
-    if not fl_server:
-        return jsonify({"error": "Federated learning server not initialized"}), 500
-    
     try:
-        # Convert weights to numpy arrays
-        weights = [np.array(w) for w in data['weights']]
+        data = request.get_json()
         
-        # Update the model with client's weights
-        fl_server.update_model(client_id, weights, data['metrics'])
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "No data provided"
+            }), 400
         
-        # Update client's last seen timestamp
-        client = Client.query.filter_by(client_id=client_id).first()
-        if client:
-            client.last_heartbeat = datetime.utcnow()
-            db.session.commit()
+        if 'weights' not in data:
+            return jsonify({
+                "status": "error",
+                "message": "weights are required"
+            }), 400
+            
+        if 'metrics' not in data or not isinstance(data['metrics'], dict):
+            return jsonify({
+                "status": "error",
+                "message": "valid metrics dictionary is required"
+            }), 400
         
-        return jsonify({
-            "status": "success",
-            "message": "Model update received"
-        })
+        # Get the federated learning server instance
+        fl_server = current_app.fl_server
+        
+        if not fl_server:
+            return jsonify({
+                "status": "error",
+                "message": "Federated learning server not initialized"
+            }), 500
+        
+        try:
+            # Convert weights to numpy arrays
+            weights = [np.array(w) for w in data['weights']]
+            
+            # Update the model with client's weights
+            project_id = data['metrics'].get('project_id')
+            if not project_id:
+                return jsonify({
+                    "status": "error",
+                    "message": "project_id is required in metrics"
+                }), 400
+                
+            success = fl_server.update_model(client_id, weights, data['metrics'])
+            
+            # Update client's last seen timestamp
+            client = Client.query.filter_by(client_id=client_id).first()
+            if client:
+                client.last_heartbeat = datetime.utcnow()
+                db.session.commit()
+            
+            return jsonify({
+                "status": "success",
+                "message": "Model update received",
+                "details": {
+                    "client_id": client_id,
+                    "project_id": project_id,
+                    "round": data['metrics'].get('round', 0),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            })
+        except Exception as e:
+            current_app.logger.error(f"Error updating model: {str(e)}")
+            db.session.rollback()
+            return jsonify({
+                "status": "error",
+                "message": "Error updating model",
+                "details": {
+                    "error": str(e),
+                    "client_id": client_id
+                }
+            }), 500
+            
     except Exception as e:
-        current_app.logger.error(f"Error updating model: {str(e)}")
-        db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        current_app.logger.error(f"Error processing model update: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Error processing request",
+            "details": {
+                "error": str(e),
+                "client_id": client_id
+            }
+        }), 500
 
 @api_bp.route('/clients/<client_id>/heartbeat', methods=['POST'])
 @require_api_key
 def client_heartbeat(client_id):
     """Handle client heartbeat to update last seen timestamp."""
-    client = Client.query.filter_by(client_id=client_id).first()
-    
-    if client:
+    try:
+        client = Client.query.filter_by(client_id=client_id).first()
+        
+        if not client:
+            return jsonify({
+                "status": "error",
+                "message": "Client not found"
+            }), 404
+        
         client.last_heartbeat = datetime.utcnow()
         client.is_connected = True
         db.session.commit()
-    
-    return jsonify({"status": "success"})
+        
+        return jsonify({
+            "status": "success",
+            "message": "Heartbeat received",
+            "details": {
+                "client_id": client_id,
+                "last_heartbeat": client.last_heartbeat.isoformat()
+            }
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error updating heartbeat: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Error updating heartbeat",
+            "details": {
+                "error": str(e),
+                "client_id": client_id
+            }
+        }), 500
 
 @api_bp.route('/clients/tasks', methods=['GET'])
 @require_api_key
 def client_tasks():
-    """Get tasks for clients."""
-    # Get the federated learning server instance
-    fl_server = current_app.fl_server
-    
-    if not fl_server:
-        return jsonify({"error": "Federated learning server not initialized"}), 500
-    
-    # Get current round information
-    current_round = fl_server.current_round
-    total_rounds = fl_server.rounds
-    
-    return jsonify({
-        "current_round": current_round,
-        "total_rounds": total_rounds,
-        "min_clients": fl_server.min_clients,
-        "connected_clients": len(fl_server.clients)
-    })
+    """Get global task information for all clients."""
+    try:
+        # Get the federated learning server instance
+        fl_server = current_app.fl_server
+        
+        if not fl_server:
+            return jsonify({
+                "status": "error",
+                "message": "Federated learning server not initialized"
+            }), 500
+        
+        # Get current round information
+        current_round = fl_server.current_round
+        total_rounds = fl_server.rounds
+        
+        return jsonify({
+            "status": "success",
+            "message": "Server status retrieved",
+            "details": {
+                "current_round": current_round,
+                "total_rounds": total_rounds,
+                "min_clients": fl_server.min_clients,
+                "connected_clients": len(fl_server.clients)
+            }
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error getting server status: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Error getting server status",
+            "details": {
+                "error": str(e)
+            }
+        }), 500
 
 # Client registration aliases
 @api_bp.route('/client/register', methods=['POST'])

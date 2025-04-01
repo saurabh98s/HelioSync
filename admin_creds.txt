@@ -23,3 +23,12 @@ python -m fl_client.run_client \
     --batch_size 32 \
     --epochs 5 \
     --data_split 0.5
+
+
+python -m fl_client.run_client \
+    --client_id client2 \
+    --api_key 25cc2e20d7281ea64f21969ab37fcb77d29e650c8eaf6a43296448acbc673f8d \
+    --server_url http://localhost:5000 \
+    --batch_size 32 \
+    --epochs 5 \
+    --data_split 0.5
