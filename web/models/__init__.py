@@ -151,6 +151,10 @@ class Client(db.Model):
     name = db.Column(db.String(100), nullable=False)
     ip_address = db.Column(db.String(50), nullable=True)
     device_info = db.Column(db.String(200), nullable=True)
+    platform = db.Column(db.String(50), nullable=True)  # Operating system platform
+    machine = db.Column(db.String(50), nullable=True)  # Machine architecture
+    python_version = db.Column(db.String(20), nullable=True)  # Python version
+    data_size = db.Column(db.Integer, default=0)  # Size of client's dataset
     is_connected = db.Column(db.Boolean, default=False)
     last_heartbeat = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

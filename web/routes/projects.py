@@ -105,6 +105,11 @@ def start(project_id):
         flash('Project is already running.', 'warning')
         return redirect(url_for('projects.view', project_id=project_id))
     
+    # Check if project is completed
+    if project.status == 'completed':
+        flash('Cannot restart a completed project. Create a new project instead.', 'warning')
+        return redirect(url_for('projects.view', project_id=project_id))
+    
     try:
         # Get the FL server instance
         fl_server = current_app.fl_server
@@ -117,6 +122,36 @@ def start(project_id):
         if not success:
             flash('Failed to initialize project.', 'error')
             return redirect(url_for('projects.view', project_id=project_id))
+        
+        # Register all assigned clients with the FL server
+        assigned_clients_count = 0
+        for project_client in project.project_clients:
+            client = project_client.client
+            if client.is_active():
+                # Add client to FL server project
+                if client.client_id not in fl_server.clients:
+                    # First register client with the server if not already registered
+                    fl_server.register_client(
+                        client_id=client.client_id,
+                        name=client.name,
+                        data_size=client.data_size or 0,
+                        device_info=client.device_info or '',
+                        platform=client.platform or 'unknown',
+                        machine=client.machine or 'unknown',
+                        python_version=client.python_version or '3.x'
+                    )
+                
+                # Now add client to this specific project
+                fl_server.add_client_to_project(client.client_id, project.id)
+                assigned_clients_count += 1
+                
+                # Update project client status
+                project_client.status = 'training'
+                
+        db.session.commit()
+        
+        if assigned_clients_count < project.min_clients:
+            flash(f'Warning: Only {assigned_clients_count} active clients found, but project requires {project.min_clients}. Training may not start.', 'warning')
         
         # Start the federated server
         success = start_federated_server(project)

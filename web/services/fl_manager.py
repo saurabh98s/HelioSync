@@ -87,25 +87,60 @@ class FederatedLearningServer:
     def add_client_to_project(self, client_id, project_id):
         """Add a client to a specific project."""
         try:
+            # Get the client from the database to ensure we have correct client_id (UUID)
+            client = Client.query.filter_by(client_id=client_id).first()
+            if not client:
+                client = Client.query.get(client_id)
+                if not client:
+                    logger.error(f"Client with ID/UUID {client_id} not found")
+                    return False
+                # We found the client by ID, so use its UUID
+                client_id = client.client_id
+                
             if client_id not in self.clients:
-                logger.error(f"Client {client_id} not found")
-                return False
+                logger.error(f"Client {client_id} not found in FL server. Attempting to register...")
+                # Try to register the client with the server
+                self.register_client(
+                    client_id=client_id,
+                    name=client.name,
+                    data_size=client.data_size or 0,
+                    device_info=client.device_info or '',
+                    platform=client.platform or 'unknown',
+                    machine=client.machine or 'unknown',
+                    python_version=client.python_version or '3.x'
+                )
             
             if project_id not in self.projects:
                 logger.error(f"Project {project_id} not found")
                 return False
             
+            # Make sure client_projects dict is initialized for this client
+            if client_id not in self.client_projects:
+                self.client_projects[client_id] = set()
+                
             # Add client to project's client set
             self.client_projects[client_id].add(project_id)
             
-            # Create project client association in database
-            project_client = ProjectClient(
+            # Check if the project client association already exists
+            project_client = ProjectClient.query.filter_by(
                 project_id=project_id,
-                client_id=client_id,
-                status='registered',
-                joined_at=datetime.utcnow()
-            )
-            db.session.add(project_client)
+                client_id=client.id
+            ).first()
+            
+            if not project_client:
+                # Create project client association in database
+                project_client = ProjectClient(
+                    project_id=project_id,
+                    client_id=client.id,
+                    status='registered',
+                    joined_at=datetime.utcnow()
+                )
+                db.session.add(project_client)
+            else:
+                # Update existing association
+                project_client.status = 'registered'
+                project_client.joined_at = datetime.utcnow()
+                
             db.session.commit()
             
             logger.info(f"Client {client_id} added to project {project_id}")
@@ -323,26 +358,67 @@ class FederatedLearningServer:
         # Create mock model weights for testing purposes
         # In a real implementation, you would actually load or create a real model
         
-        # MNIST weights structure (simple CNN)
+        # MNIST weights structure (CNN with BatchNorm)
         if dataset_name.lower() == 'mnist':
-            # Conv1 (28x28x1 -> 26x26x32)
+            # First Conv Block
+            # Conv1 (28x28x1 -> 28x28x32)
             conv1_w = np.random.randn(3, 3, 1, 32).astype(np.float32) * 0.1
             conv1_b = np.zeros(32, dtype=np.float32)
+            # BatchNorm1
+            bn1_gamma = np.ones(32, dtype=np.float32)
+            bn1_beta = np.zeros(32, dtype=np.float32)
+            bn1_mean = np.zeros(32, dtype=np.float32)
+            bn1_var = np.ones(32, dtype=np.float32)
             
-            # Conv2 (26x26x32 -> 24x24x64)
-            conv2_w = np.random.randn(3, 3, 32, 64).astype(np.float32) * 0.1
-            conv2_b = np.zeros(64, dtype=np.float32)
+            # Conv2 (28x28x32 -> 28x28x32)
+            conv2_w = np.random.randn(3, 3, 32, 32).astype(np.float32) * 0.1
+            conv2_b = np.zeros(32, dtype=np.float32)
             
-            # Dense (9216 -> 128)
-            dense1_w = np.random.randn(9216, 128).astype(np.float32) * 0.1
-            dense1_b = np.zeros(128, dtype=np.float32)
+            # Second Conv Block
+            # Conv3 (14x14x32 -> 14x14x64)
+            conv3_w = np.random.randn(3, 3, 32, 64).astype(np.float32) * 0.1
+            conv3_b = np.zeros(64, dtype=np.float32)
+            # BatchNorm2
+            bn2_gamma = np.ones(64, dtype=np.float32)
+            bn2_beta = np.zeros(64, dtype=np.float32)
+            bn2_mean = np.zeros(64, dtype=np.float32)
+            bn2_var = np.ones(64, dtype=np.float32)
             
-            # Output (128 -> 10)
-            output_w = np.random.randn(128, 10).astype(np.float32) * 0.1
+            # Conv4 (14x14x64 -> 14x14x64)
+            conv4_w = np.random.randn(3, 3, 64, 64).astype(np.float32) * 0.1
+            conv4_b = np.zeros(64, dtype=np.float32)
+            
+            # Dense layers
+            # Dense1 (flattened -> 512)
+            dense1_w = np.random.randn(12544, 512).astype(np.float32) * 0.1  # 7*7*256 -> 512
+            dense1_b = np.zeros(512, dtype=np.float32)
+            # BatchNorm3
+            bn3_gamma = np.ones(512, dtype=np.float32)
+            bn3_beta = np.zeros(512, dtype=np.float32)
+            bn3_mean = np.zeros(512, dtype=np.float32)
+            bn3_var = np.ones(512, dtype=np.float32)
+            
+            # Output (512 -> 10)
+            output_w = np.random.randn(512, 10).astype(np.float32) * 0.1
             output_b = np.zeros(10, dtype=np.float32)
             
-            weights = [conv1_w, conv1_b, conv2_w, conv2_b, dense1_w, dense1_b, output_w, output_b]
-            logger.info(f"Initialized mock MNIST model weights")
+            weights = [
+                # First Conv Block
+                conv1_w, conv1_b,
+                bn1_gamma, bn1_beta, bn1_mean, bn1_var,
+                conv2_w, conv2_b,
+                
+                # Second Conv Block
+                conv3_w, conv3_b,
+                bn2_gamma, bn2_beta, bn2_mean, bn2_var,
+                conv4_w, conv4_b,
+                
+                # Dense layers
+                dense1_w, dense1_b,
+                bn3_gamma, bn3_beta, bn3_mean, bn3_var,
+                output_w, output_b
+            ]
+            logger.info(f"Initialized mock MNIST model weights with BatchNorm")
             
         # CIFAR-10 weights structure (simple CNN)
         elif dataset_name.lower() == 'cifar10':
