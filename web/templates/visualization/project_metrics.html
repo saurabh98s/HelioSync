@@ -64,7 +64,13 @@
                                 <div class="col mr-2">
                                     <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
                                         Global Accuracy</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ "%.2f"|format(accuracy_data.global[-1] * 100) }}%</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                        {% if accuracy_data.global %}
+                                            {{ "%.2f"|format(accuracy_data.global[-1] * 100) }}%
+                                        {% else %}
+                                            0.00%
+                                        {% endif %}
+                                    </div>
                                 </div>
                                 <div class="col-auto">
                                     <i class="fas fa-chart-line fa-2x text-gray-300"></i>
@@ -81,7 +87,13 @@
                                 <div class="col mr-2">
                                     <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
                                         Global Loss</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ "%.4f"|format(loss_data.global[-1]) }}</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                        {% if loss_data.global %}
+                                            {{ "%.4f"|format(loss_data.global[-1]) }}
+                                        {% else %}
+                                            0.0000
+                                        {% endif %}
+                                    </div>
                                 </div>
                                 <div class="col-auto">
                                     <i class="fas fa-chart-bar fa-2x text-gray-300"></i>
@@ -164,8 +176,9 @@
                     borderColor: '#4e73df',
                     backgroundColor: 'rgba(78, 115, 223, 0.05)',
                     fill: true
-                },
-                {% for i in range(project.min_clients) %}
+                }
+                {% if accuracy_data.clients and accuracy_data.clients[0] %}
+                ,{% for i in range(project.min_clients) %}
                 {
                     label: 'Client {{ i + 1 }}',
                     data: {{ accuracy_data.clients[i]|tojson }},
@@ -174,6 +187,7 @@
                     fill: false
                 }{% if not loop.last %},{% endif %}
                 {% endfor %}
+                {% endif %}
             ]
         },
         options: {
@@ -200,8 +214,9 @@
                     borderColor: '#e74a3b',
                     backgroundColor: 'rgba(231, 74, 59, 0.05)',
                     fill: true
-                },
-                {% for i in range(project.min_clients) %}
+                }
+                {% if loss_data.clients and loss_data.clients[0] %}
+                ,{% for i in range(project.min_clients) %}
                 {
                     label: 'Client {{ i + 1 }}',
                     data: {{ loss_data.clients[i]|tojson }},
@@ -210,6 +225,7 @@
                     fill: false
                 }{% if not loop.last %},{% endif %}
                 {% endfor %}
+                {% endif %}
             ]
         },
         options: {

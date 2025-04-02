@@ -290,10 +290,36 @@ def update_model(client_id):
             # Update the model with client's weights
             project_id = data['metrics'].get('project_id')
             if not project_id:
+                # Provide a more detailed error message
+                error_msg = f"project_id is required in metrics. Provided metrics: {data['metrics']}"
+                current_app.logger.error(error_msg)
                 return jsonify({
                     "status": "error",
-                    "message": "project_id is required in metrics"
+                    "message": error_msg
                 }), 400
+                
+            # Check if project is running
+            project = Project.query.get(project_id)
+            if not project:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Project {project_id} not found"
+                }), 404
+                
+            if project.status != 'running':
+                # If project is not running (completed, failed, etc.), still acknowledge
+                # the update but don't process it - this avoids errors in the client
+                return jsonify({
+                    "status": "success",
+                    "message": f"Update received but project is {project.status}",
+                    "details": {
+                        "client_id": client_id,
+                        "project_id": project_id,
+                        "project_status": project.status,
+                        "round": data['metrics'].get('round', 0),
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                })
                 
             success = fl_server.update_model(client_id, weights, data['metrics'])
             

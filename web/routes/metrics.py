@@ -62,17 +62,37 @@ def project_metrics(project_id):
     
     # Get metrics from models
     metrics = []
-    for model in project.models:
+    models = Model.query.filter_by(project_id=project_id).order_by(Model.version).all()
+    
+    for model in models:
         if model.metrics:
             metrics.append({
                 'version': model.version,
                 'metrics': model.metrics,
                 'created_at': model.created_at.isoformat(),
-                'clients_count': model.clients_count
+                'clients_count': model.clients_count,
+                'is_final': model.is_final
             })
+    
+    # Get active clients count from ProjectClient table
+    active_clients = ProjectClient.query.filter_by(
+        project_id=project_id,
+        status='joined'
+    ).count()
+    
+    # Get the latest metrics
+    latest_metrics = {}
+    latest_model = Model.query.filter_by(project_id=project_id).order_by(Model.version.desc()).first()
+    if latest_model and latest_model.metrics:
+        latest_metrics = latest_model.metrics
     
     return jsonify({
         'project_id': project.id,
         'name': project.name,
-        'metrics': metrics
+        'status': project.status,
+        'current_round': project.current_round,
+        'total_rounds': project.rounds,
+        'metrics': metrics,
+        'realtime_metrics': latest_metrics,
+        'active_clients': active_clients
     }) 

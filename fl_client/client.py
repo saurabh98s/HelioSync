@@ -53,6 +53,7 @@ class FederatedClient:
         self.server_url = server_url
         self.is_training = False
         self.current_round = 0
+        self.current_project_id = None  # Track the current project ID
         
         # Initialize metrics
         self.metrics = {
@@ -175,30 +176,27 @@ class FederatedClient:
     
     def _training_loop(self):
         """Main training loop."""
-        while self.is_training:
+        while True:
             try:
-                # Get current model weights from server
+                # Check for tasks from server
                 response = requests.get(
                     f"{self.server_url}/api/clients/{self.client_id}/tasks",
                     headers={'X-API-Key': self.api_key}
                 )
                 response.raise_for_status()
                 data = response.json()
-
-                # Handle different status responses from server
+                
                 status = data.get('status')
                 
                 if status == 'error':
                     print(f"Error from server: {data.get('message', 'Unknown error')}")
-                    if 'details' in data and isinstance(data['details'], dict):
-                        print(f"Details: {data['details']}")
                     time.sleep(5)
                     continue
                     
                 elif status == 'waiting':
-                    print(f"Waiting: {data.get('message', 'No tasks available')}")
-                    if 'details' in data and isinstance(data['details'], dict):
-                        print(f"Details: {data['details']}")
+                    details = data.get('details', {})
+                    print(f"Waiting: {details.get('message', 'No active projects')}")
+                    print(f"Details: {details}")
                     time.sleep(5)
                     continue
                     
@@ -212,73 +210,159 @@ class FederatedClient:
                     current_round = details.get('round', 0)
                     total_rounds = details.get('total_rounds', 0)
                     weights = details.get('weights', [])
+                    dataset_name = details.get('dataset', 'mnist')
+                    
+                    # Store project ID and current round
+                    self.current_project_id = project_id
+                    self.current_round = current_round
                     
                     print(f"Training for project: {project_name} (ID: {project_id})")
                     print(f"Round {current_round}/{total_rounds}")
                     
-                    # Update model with server weights
-                    self.model.set_weights([np.array(w) for w in weights])
-                    self.current_round = current_round
+                    # Check if we need to recreate the model to match server weights
+                    server_weights = [np.array(w) for w in weights]
+                    model_weights_count = len(self.model.get_weights())
+                    server_weights_count = len(server_weights)
                     
-                    # Train locally
-                    print(f"\nStarting local training for round {self.current_round}")
+                    if model_weights_count != server_weights_count:
+                        print(f"Model architecture mismatch: client has {model_weights_count} weights, "
+                              f"server sent {server_weights_count} weights")
+                        print("Recreating model to match server architecture...")
+                        
+                        # Create a new model that exactly matches the server's architecture
+                        # Using the exact architecture from the server's _initialize_tensorflow_model
+                        input_shape = (28, 28, 1)
+                        
+                        # Create sequential model to match server exactly
+                        self.model = tf.keras.Sequential([
+                            # First Conv Block
+                            # Conv1 (28x28x1 -> 28x28x32)
+                            tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
+                            tf.keras.layers.BatchNormalization(),
+                            # Conv2 (28x28x32 -> 28x28x32)
+                            tf.keras.layers.Conv2D(32, (3, 3), padding='same'),
+                            # MaxPooling only after first block (28x28x32 -> 14x14x32)
+                            tf.keras.layers.MaxPooling2D((2, 2)),
+                            
+                            # Second Conv Block
+                            # Conv3 (14x14x32 -> 14x14x64)
+                            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+                            tf.keras.layers.BatchNormalization(),
+                            # Conv4 (14x14x64 -> 14x14x64)
+                            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+                            # No MaxPooling here - keep 14x14 dimensions
+                            
+                            # Flatten layer - 14*14*64 = 12544 neurons
+                            tf.keras.layers.Flatten(),
+                            
+                            # Dense layers
+                            # Dense1 (12544 -> 512)
+                            tf.keras.layers.Dense(512),
+                            tf.keras.layers.BatchNormalization(),
+                            # Output (512 -> 10)
+                            tf.keras.layers.Dense(10, activation='softmax')
+                        ])
+                        
+                        # Compile model
+                        self.model.compile(
+                            optimizer='adam',
+                            loss='categorical_crossentropy',
+                            metrics=['accuracy']
+                        )
+                        
+                        print(f"Created new model with {len(self.model.get_weights())} weight tensors")
+                        print("Model summary:")
+                        self.model.summary()
+                    
+                    # Update model with server weights
+                    try:
+                        # Convert weights to float32 to ensure compatibility with TensorFlow
+                        server_weights_float32 = [w.astype(np.float32) for w in server_weights]
+                        
+                        # Print weight shapes for debugging
+                        print("\nServer weights shapes:")
+                        for i, w in enumerate(server_weights_float32):
+                            print(f"Weight {i}: {w.shape}")
+                        
+                        print("\nModel weights shapes:")
+                        for i, w in enumerate(self.model.get_weights()):
+                            print(f"Weight {i}: {w.shape}")
+                        
+                        # Apply weights
+                        self.model.set_weights(server_weights_float32)
+                        print("Successfully applied server weights to model")
+                    except ValueError as e:
+                        print(f"Error applying weights: {e}")
+                        print("Detailed weight information:")
+                        for i, w in enumerate(server_weights):
+                            print(f"Server weight {i}: shape {w.shape}, type {w.dtype}")
+                        for i, w in enumerate(self.model.get_weights()):
+                            print(f"Model weight {i}: shape {w.shape}, type {w.dtype}")
+                        continue
+                    
+                    # Train the model
                     history = self.model.fit(
                         self.x_train,
                         self.y_train,
-                        batch_size=self.batch_size,
                         epochs=self.epochs,
-                        validation_split=0.2,
-                        verbose=1,
-                        callbacks=[MetricCallback(self)]
+                        batch_size=self.batch_size,
+                        validation_data=(self.x_test, self.y_test),
+                        callbacks=[MetricCallback(self)],
+                        verbose=1
                     )
-
-                    # Evaluate model
-                    val_loss, val_accuracy = self.model.evaluate(
-                        self.x_test if self.x_test is not None else self.x_train,
-                        self.y_test if self.y_test is not None else self.y_train,
-                        verbose=0
-                    )
-
+                    
                     # Send final update to server
+                    final_weights = [w.tolist() for w in self.model.get_weights()]
                     final_metrics = {
-                        'round': self.current_round,
-                        'epoch': self.epochs,
-                        'total_epochs': self.epochs,
                         'loss': float(history.history['loss'][-1]),
                         'accuracy': float(history.history['accuracy'][-1]),
-                        'val_loss': float(val_loss),
-                        'val_accuracy': float(val_accuracy),
-                        'samples': len(self.x_train),
-                        'project_id': project_id
+                        'val_loss': float(history.history['val_loss'][-1]),
+                        'val_accuracy': float(history.history['val_accuracy'][-1]),
+                        'round': current_round,
+                        'project_id': project_id  # Ensure project_id is included
                     }
-
+                    
+                    # Double-check that project_id is set
+                    if 'project_id' not in final_metrics or not final_metrics['project_id']:
+                        print("Warning: project_id not set in final metrics")
+                        if self.current_project_id:
+                            final_metrics['project_id'] = self.current_project_id
+                            print(f"Using stored project_id: {self.current_project_id}")
+                        else:
+                            print("Error: Cannot send update without project_id")
+                            continue
+                    
                     response = requests.post(
                         f"{self.server_url}/api/clients/{self.client_id}/model_update",
                         json={
-                            'weights': [w.tolist() for w in self.model.get_weights()],
+                            'weights': final_weights,
                             'metrics': final_metrics
                         },
                         headers={'X-API-Key': self.api_key}
                     )
-                    response.raise_for_status()
-                    update_response = response.json()
-                    if update_response.get('status') == 'success':
-                        print(f"Round {self.current_round} completed successfully")
+                    
+                    # Check if the response is successful (even for completed projects)
+                    if response.status_code == 200:
+                        response_data = response.json()
+                        if response_data.get('status') == 'success':
+                            # Check if project is completed
+                            if 'project_status' in response_data.get('details', {}) and response_data['details']['project_status'] == 'completed':
+                                print(f"Project is already completed: {response_data['message']}")
+                            else:
+                                print("Training completed and update sent to server")
+                        else:
+                            print(f"Server response: {response_data.get('message', 'Unknown response')}")
                     else:
-                        print(f"Update response: {update_response}")
+                        response.raise_for_status()
+                        print("Training completed and update sent to server")
                 
-                else:
-                    print(f"Unknown status from server: {status}")
-                    print(f"Response data: {data}")
+                time.sleep(1)  # Small delay between iterations
                 
-                # Wait before checking for the next task
-                time.sleep(5)
-
             except requests.exceptions.RequestException as e:
-                print(f"Network error during training: {e}")
+                print(f"Network error: {e}")
                 time.sleep(5)
             except Exception as e:
-                print(f"Error during training: {e}")
+                print(f"Error in training loop: {e}")
                 time.sleep(5)
 
 class MetricCallback(tf.keras.callbacks.Callback):
@@ -316,6 +400,34 @@ class MetricCallback(tf.keras.callbacks.Callback):
                 'client_id': self.client.client_id,
                 'timestamp': datetime.utcnow().isoformat()
             }
+            
+            # Add project_id to metrics if available
+            if self.client.current_project_id:
+                metrics['project_id'] = self.client.current_project_id
+            
+            # If project_id not available from client, get it from server
+            if 'project_id' not in metrics:
+                try:
+                    project_response = requests.get(
+                        f"{self.client.server_url}/api/clients/{self.client.client_id}/tasks",
+                        headers={'X-API-Key': self.client.api_key}
+                    )
+                    if project_response.status_code == 200:
+                        project_data = project_response.json()
+                        if project_data.get('status') == 'training':
+                            # Add project_id to metrics
+                            project_id = project_data.get('details', {}).get('project_id')
+                            if project_id:
+                                metrics['project_id'] = project_id
+                                # Also update the client's current_project_id
+                                self.client.current_project_id = project_id
+                except Exception as e:
+                    print(f"Error getting project_id: {e}")
+            
+            # If project_id is still not available, don't send metrics
+            if 'project_id' not in metrics:
+                print("Warning: project_id not available, skipping metrics update")
+                return
 
             # Validate metrics before sending
             for key, value in metrics.items():
@@ -336,8 +448,21 @@ class MetricCallback(tf.keras.callbacks.Callback):
                 },
                 headers={'X-API-Key': self.client.api_key}
             )
-            response.raise_for_status()
-            print("Metrics sent successfully")
+            
+            # Check if the response is successful (even for completed projects)
+            if response.status_code == 200:
+                response_data = response.json()
+                if response_data.get('status') == 'success':
+                    # Check if project is completed
+                    if 'project_status' in response_data.get('details', {}) and response_data['details']['project_status'] == 'completed':
+                        print(f"Project is already completed: {response_data['message']}")
+                    else:
+                        print("Metrics sent successfully")
+                else:
+                    print(f"Server response: {response_data.get('message', 'Unknown response')}")
+            else:
+                response.raise_for_status()
+                print("Metrics sent successfully")
             
         except Exception as e:
             print(f"Error sending epoch metrics: {e}")

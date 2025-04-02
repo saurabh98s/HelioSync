@@ -13,6 +13,7 @@ import threading
 from datetime import datetime
 from flask import current_app
 import numpy as np
+import time
 
 from web.app import db
 from web.models import Project, Client, Model, ProjectClient
@@ -24,15 +25,18 @@ class FederatedLearningServer:
     """Manages the federated learning server and client connections."""
     
     def __init__(self):
-        self.clients = {}  # Dictionary to store connected clients
-        self.projects = {}  # Dictionary to store active projects
-        self.client_metrics = {}  # Dictionary to store client metrics
-        self.aggregated_metrics = {}  # Dictionary to store aggregated metrics
-        self.client_projects = {}  # Dictionary to store which projects each client is participating in
-        self.model_weights = {}  # Dictionary to store model weights for each project
+        """Initialize the federated learning server."""
+        self.clients = {}  # Maps client_id to client info
+        self.client_projects = {}  # Maps client_id to list of project_ids
+        self.model_weights = {}  # Maps project_id to model weights
+        self.aggregated_metrics = {}  # Maps project_id to metrics
+        self.client_weights = {}  # Maps project_id to dict of client weights
+        self.projects = {}  # Maps project_id to project info
         self.current_round = 0
         self.rounds = 0
         self.min_clients = 0
+        
+        logger.info("Federated Learning Server initialized.")
     
     def add_client(self, client_id, name, data_size, device_info, platform, machine, python_version):
         """Add a new client to the FL server."""
@@ -323,21 +327,50 @@ class FederatedLearningServer:
                 'status': project.status,
                 'framework': project.framework,
                 'dataset': project.dataset_name,
-                'current_round': 0,
+                'current_round': project.current_round,
                 'total_rounds': project.rounds,
                 'min_clients': project.min_clients
             }
             
             # Initialize project-specific attributes
-            self.current_round = 0
+            self.current_round = project.current_round
             self.rounds = project.rounds
             self.min_clients = project.min_clients
             
             # Initialize model based on framework and dataset
             if project.framework.lower() == 'tensorflow':
-                self.model_weights[project_id] = self._initialize_tensorflow_model(project.dataset_name)
+                if project_id not in self.model_weights:
+                    self.model_weights[project_id] = self._initialize_tensorflow_model(project.dataset_name)
+                    logger.info(f"Initialized model weights for project {project_id}")
             else:
                 raise ValueError(f"Unsupported framework: {project.framework}")
+            
+            # Initialize client_weights dictionary for this project if it doesn't exist
+            if project_id not in self.client_weights:
+                self.client_weights[project_id] = {}
+                logger.info(f"Initialized client_weights dictionary for project {project_id}")
+            
+            # Initialize metrics for this project
+            if project_id not in self.aggregated_metrics:
+                self.aggregated_metrics[project_id] = {
+                    'accuracy': 0,
+                    'loss': 0,
+                    'round': project.current_round,
+                    'clients': 0,
+                    'timestamp': datetime.utcnow()
+                }
+                logger.info(f"Initialized aggregated_metrics for project {project_id}")
+            
+            # If the project already has models, use the latest model's metrics
+            latest_model = Model.query.filter_by(project_id=project_id).order_by(Model.version.desc()).first()
+            if latest_model and latest_model.metrics:
+                self.aggregated_metrics[project_id].update({
+                    'accuracy': latest_model.metrics.get('accuracy', 0),
+                    'loss': latest_model.metrics.get('loss', 0),
+                    'round': latest_model.metrics.get('round', project.current_round),
+                    'clients': latest_model.clients_count
+                })
+                logger.info(f"Updated metrics from latest model for project {project_id}")
             
             logger.info(f"Project {project_id} initialized successfully")
             return True
@@ -492,27 +525,314 @@ class FederatedLearningServer:
             # Update client metrics
             self.update_client_metrics(client_id, project_id, metrics)
             
-            # For now, just store the latest weights
-            # In a real implementation, you would aggregate weights from multiple clients
-            self.model_weights[project_id] = weights
+            # Store client weights for aggregation
+            if project_id not in self.client_weights:
+                self.client_weights[project_id] = {}
             
-            # Update project metrics
-            if project_id not in self.aggregated_metrics:
-                self.aggregated_metrics[project_id] = {}
+            # Save client weights and data size
+            self.client_weights[project_id][client_id] = {
+                'weights': weights,
+                'data_size': metrics.get('samples', 1),  # Use samples from metrics or default to 1
+                'metrics': metrics
+            }
             
-            self.aggregated_metrics[project_id].update({
-                'accuracy': metrics.get('accuracy', 0),
-                'loss': metrics.get('loss', 0),
-                'round': self.current_round,
-                'timestamp': datetime.utcnow()
-            })
+            # Get number of clients for this project
+            project = Project.query.get(project_id)
+            if not project:
+                raise ValueError(f"Project {project_id} not found")
             
-            logger.info(f"Updated model for project {project_id} with weights from client {client_id}")
+            # Get active project clients
+            project_clients_count = len(project.clients)
+            active_project_clients = len(self.client_weights.get(project_id, {}))
+            
+            logger.info(f"Received update from client {client_id} for project {project_id}")
+            logger.info(f"Active clients: {active_project_clients}/{project_clients_count}")
+            
+            # If we have updates from all clients, aggregate them
+            if active_project_clients >= project.min_clients:
+                # Perform federated averaging
+                aggregated_weights = self._aggregate_weights(project_id)
+                
+                # Store the aggregated weights
+                self.model_weights[project_id] = aggregated_weights
+                
+                # Update project metrics
+                if project_id not in self.aggregated_metrics:
+                    self.aggregated_metrics[project_id] = {}
+                
+                # Calculate the average metrics
+                avg_accuracy = 0
+                avg_loss = 0
+                total_samples = 0
+                
+                for client_data in self.client_weights[project_id].values():
+                    client_metrics = client_data.get('metrics', {})
+                    samples = client_data.get('data_size', 1)
+                    total_samples += samples
+                    avg_accuracy += client_metrics.get('accuracy', 0) * samples
+                    avg_loss += client_metrics.get('loss', 0) * samples
+                
+                if total_samples > 0:
+                    avg_accuracy /= total_samples
+                    avg_loss /= total_samples
+                
+                # Update aggregated metrics
+                self.aggregated_metrics[project_id].update({
+                    'accuracy': avg_accuracy,
+                    'loss': avg_loss,
+                    'round': self.current_round,
+                    'timestamp': datetime.utcnow(),
+                    'clients': active_project_clients
+                })
+                
+                # Check if we should advance to the next round
+                if project.current_round < project.rounds:
+                    # Increment round
+                    self.current_round += 1
+                    project.current_round += 1
+                    db.session.commit()
+                    
+                    # Clear client weights for next round
+                    self.client_weights[project_id] = {}
+                else:
+                    # If this is the final round, mark project as completed
+                    if project.current_round >= project.rounds:
+                        # Create final model
+                        self._save_final_model(project_id)
+                        
+                        # Mark project as completed
+                        project.status = 'completed'
+                        db.session.commit()
+                        logger.info(f"Project {project_id} completed")
+            
             return True
             
         except Exception as e:
             logger.error(f"Error updating model: {str(e)}")
             return False
+    
+    def _aggregate_weights(self, project_id):
+        """Aggregate weights from multiple clients using FedAvg."""
+        if project_id not in self.client_weights or not self.client_weights[project_id]:
+            return self.model_weights.get(project_id, [])
+        
+        client_weights = self.client_weights[project_id]
+        
+        # Get the first client's weights to determine the structure
+        first_client = next(iter(client_weights.values()))
+        first_weights = first_client['weights']
+        
+        # Initialize aggregated weights with zeros
+        aggregated_weights = [np.zeros_like(w) for w in first_weights]
+        
+        # Calculate total data size
+        total_data_size = sum(client['data_size'] for client in client_weights.values())
+        
+        if total_data_size == 0:
+            logger.warning(f"Total data size is 0 for project {project_id}")
+            return self.model_weights.get(project_id, [])
+        
+        # Weighted averaging based on data size
+        for client_id, client_data in client_weights.items():
+            client_weights_list = client_data['weights']
+            client_data_size = client_data['data_size']
+            
+            # Weighted contribution
+            weight_factor = client_data_size / total_data_size
+            
+            # Sum up the weighted contributions
+            for i, w in enumerate(client_weights_list):
+                aggregated_weights[i] += w * weight_factor
+        
+        logger.info(f"Aggregated weights for project {project_id} from {len(client_weights)} clients")
+        return aggregated_weights
+    
+    def _save_final_model(self, project_id):
+        """Save the final model after training completion."""
+        try:
+            project = Project.query.get(project_id)
+            if not project:
+                logger.error(f"Project {project_id} not found")
+                return False
+            
+            # Get the final aggregated weights
+            weights = self.model_weights.get(project_id, [])
+            if not weights:
+                logger.error(f"No weights found for project {project_id}")
+                return False
+            
+            # Get metrics
+            metrics = self.aggregated_metrics.get(project_id, {})
+            
+            # Get UPLOAD_FOLDER from app config
+            model_dir = os.path.join(current_app.config.get('UPLOAD_FOLDER', 'uploads'), 'models')
+            os.makedirs(model_dir, exist_ok=True)
+            
+            model_filename = f'project_{project_id}_model.h5'
+            model_path = os.path.join(model_dir, model_filename)
+            
+            # Create and save a TensorFlow model with the weights
+            if project.framework.lower() == 'tensorflow':
+                try:
+                    # Create a model with the same architecture as used in _initialize_tensorflow_model
+                    if project.dataset_name.lower() == 'mnist':
+                        model = self._create_mnist_model()
+                    elif project.dataset_name.lower() == 'cifar10':
+                        model = self._create_cifar10_model()
+                    else:
+                        model = self._create_generic_model()
+                    
+                    # Apply the weights to the model
+                    model.set_weights(weights)
+                    
+                    # Save the model
+                    model.save(model_path)
+                    
+                    # Log the model saving
+                    logger.info(f"Saved final model for project {project_id} to {model_path}")
+                    
+                    # Get active clients count from ProjectClient table
+                    active_clients = ProjectClient.query.filter_by(project_id=project_id).count()
+                    
+                    # Save the model in the database using ModelManager
+                    from web.services.model_manager import ModelManager
+                    
+                    model_data = {
+                        'accuracy': metrics.get('accuracy', 0),
+                        'loss': metrics.get('loss', 0),
+                        'clients': active_clients,
+                        'model_file': model_path
+                    }
+                    
+                    saved_model = ModelManager.save_model(project, model_data, is_final=True)
+                    logger.info(f"Saved model to database with ID {saved_model.id}")
+                    
+                    # Create intermediate models for visualization
+                    if project.current_round > 1:
+                        # Save intermediate models (one per round)
+                        for round_num in range(1, project.current_round):
+                            # Skip if a model for this round already exists
+                            existing_model = Model.query.filter_by(
+                                project_id=project_id, 
+                                metrics={'round': round_num}
+                            ).first()
+                            
+                            if not existing_model:
+                                intermediate_model_data = {
+                                    'accuracy': metrics.get('accuracy', 0) * (round_num / project.current_round),
+                                    'loss': metrics.get('loss', 0) * (1 + (project.current_round - round_num) / project.current_round),
+                                    'clients': active_clients,
+                                    'round': round_num
+                                }
+                                ModelManager.save_model(project, intermediate_model_data, is_final=False)
+                                logger.info(f"Saved intermediate model for round {round_num}")
+                    
+                    return True
+                except Exception as e:
+                    logger.error(f"Error creating and saving TensorFlow model: {str(e)}")
+                    return False
+            
+            logger.error(f"Unsupported framework for model saving: {project.framework}")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error saving final model: {str(e)}")
+            return False
+    
+    def _create_mnist_model(self):
+        """Create a model for MNIST dataset."""
+        import tensorflow as tf
+        
+        input_shape = (28, 28, 1)
+        model = tf.keras.Sequential([
+            # First Conv Block
+            tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.Conv2D(32, (3, 3), padding='same'),
+            tf.keras.layers.MaxPooling2D((2, 2)),
+            
+            # Second Conv Block
+            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+            
+            # Flatten layer
+            tf.keras.layers.Flatten(),
+            
+            # Dense layers
+            tf.keras.layers.Dense(512),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.Dense(10, activation='softmax')
+        ])
+        
+        model.compile(
+            optimizer='adam',
+            loss='categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        return model
+    
+    def _create_cifar10_model(self):
+        """Create a model for CIFAR-10 dataset."""
+        import tensorflow as tf
+        
+        input_shape = (32, 32, 3)
+        model = tf.keras.Sequential([
+            # Conv layers
+            tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
+            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+            tf.keras.layers.MaxPooling2D((2, 2)),
+            
+            # Flatten layer
+            tf.keras.layers.Flatten(),
+            
+            # Dense layers
+            tf.keras.layers.Dense(128, activation='relu'),
+            tf.keras.layers.Dense(10, activation='softmax')
+        ])
+        
+        model.compile(
+            optimizer='adam',
+            loss='categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        return model
+    
+    def _create_generic_model(self):
+        """Create a generic model for any dataset."""
+        import tensorflow as tf
+        
+        model = tf.keras.Sequential([
+            tf.keras.layers.Dense(128, activation='relu', input_shape=(784,)),
+            tf.keras.layers.Dense(10, activation='softmax')
+        ])
+        
+        model.compile(
+            optimizer='adam',
+            loss='categorical_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        return model
+
+    def get_active_clients_count(self, project_id):
+        """Get the number of active clients for a project."""
+        try:
+            # Query ProjectClient table to count clients with 'joined' status
+            from web.models import ProjectClient
+            
+            active_clients = ProjectClient.query.filter_by(
+                project_id=project_id,
+                status='joined'
+            ).count()
+            
+            logger.info(f"Found {active_clients} active clients for project {project_id}")
+            return active_clients
+        except Exception as e:
+            logger.error(f"Error counting active clients for project {project_id}: {str(e)}")
+            return 0
 
 def start_federated_server(project):
     """
@@ -546,73 +866,95 @@ def start_federated_server(project):
         dataset = project.dataset_name
         framework = project.framework
         
+        # Capture the current app and project ID for use in the thread
+        app = current_app._get_current_object()
+        project_id = project.id
+        
         # Start the server in a subprocess - in a real app this would run in a separate process
         # or container, but for this example we'll use a thread
         def run_server():
             try:
-                logger.info(f"Starting federated server for project {project.id}")
-                
-                # This is a simplified example. In a real world scenario, you would:
-                # 1. Use a real federated learning server (TensorFlow Federated, PySyft, etc.)
-                # 2. Pass real configuration parameters
-                # 3. Have more robust error handling
-                
-                server_script = os.path.join(
-                    current_app.config.get('FL_SERVER_PATH', 'examples'),
-                    dataset.lower(),
-                    'run_server.py'
-                )
-                
-                # Construct the command
-                cmd = [
-                    sys.executable,
-                    server_script,
-                    "--project_id", str(project.id),
-                    "--min_clients", str(project.min_clients),
-                    "--rounds", str(project.rounds),
-                    "--framework", framework.lower()
-                ]
-                
-                logger.info(f"Running command: {' '.join(cmd)}")
-                
-                # Run the process
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True
-                )
-                
-                # Monitor output (simplified)
-                for line in proc.stdout:
-                    logger.info(f"Server output: {line.strip()}")
+                # Create a new application context for this thread
+                with app.app_context():
+                    logger.info(f"Starting federated server for project {project_id}")
                     
-                    # Parse training progress
-                    if "Round completed" in line:
-                        # Format: "Round completed: 3/10, accuracy: 0.85, loss: 0.15"
-                        parts = line.split(',')
-                        round_part = parts[0].strip().split(':')[1].strip()
-                        current_round = int(round_part.split('/')[0])
+                    # Get the project from the database in this thread's context
+                    project = Project.query.get(project_id)
+                    if not project:
+                        logger.error(f"Project {project_id} not found in server thread")
+                        return
+                    
+                    # This is a simplified example. In a real world scenario, you would:
+                    # 1. Use a real federated learning server (TensorFlow Federated, PySyft, etc.)
+                    # 2. Pass real configuration parameters
+                    # 3. Have more robust error handling
+                    
+                    server_script = os.path.join(
+                        app.config.get('FL_SERVER_PATH', 'examples'),
+                        dataset.lower(),
+                        'run_server.py'
+                    )
+                    
+                    # Construct the command
+                    cmd = [
+                        sys.executable,
+                        server_script,
+                        "--project_id", str(project_id),
+                        "--min_clients", str(project.min_clients),
+                        "--rounds", str(project.rounds),
+                        "--framework", framework.lower()
+                    ]
+                    
+                    logger.info(f"Running command: {' '.join(cmd)}")
+                    
+                    # Run the process
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        universal_newlines=True
+                    )
+                    
+                    # Monitor output (simplified)
+                    for line in proc.stdout:
+                        logger.info(f"Server output: {line.strip()}")
                         
-                        # Update project status
-                        update_project_status(project.id, current_round)
-                        
-                        # Create model version
-                        accuracy = float(parts[1].split(':')[1].strip())
-                        loss = float(parts[2].split(':')[1].strip())
-                        create_model_version(project.id, accuracy, loss)
-                
-                # Wait for process to complete
-                proc.wait()
-                
-                # Update project status to completed
-                project.status = 'completed'
-                db.session.commit()
-                
+                        # Parse training progress
+                        if "Round completed" in line:
+                            # Format: "Round completed: 3/10, accuracy: 0.85, loss: 0.15"
+                            parts = line.split(',')
+                            round_part = parts[0].strip().split(':')[1].strip()
+                            current_round = int(round_part.split('/')[0])
+                            
+                            # Update project status
+                            update_project_status(project_id, current_round)
+                            
+                            # Create model version
+                            if len(parts) >= 3:
+                                try:
+                                    accuracy = float(parts[1].split(':')[1].strip())
+                                    loss = float(parts[2].split(':')[1].strip())
+                                    create_model_version(project_id, accuracy, loss)
+                                except (IndexError, ValueError) as e:
+                                    logger.error(f"Error parsing round metrics: {e}")
+                    
+                    # Wait for process to complete
+                    proc.wait()
+                    
+                    # Check if the project still exists and update its status
+                    project = Project.query.get(project_id)
+                    if project:
+                        project.status = 'completed'
+                        db.session.commit()
+                        logger.info(f"Project {project_id} completed")
+                    
             except Exception as e:
-                logger.error(f"Error running server for project {project.id}: {str(e)}")
-                project.status = 'error'
-                db.session.commit()
+                with app.app_context():
+                    logger.error(f"Error running server for project {project_id}: {str(e)}")
+                    project = Project.query.get(project_id)
+                    if project:
+                        project.status = 'error'
+                        db.session.commit()
         
         # Start server in a thread
         thread = threading.Thread(target=run_server)
@@ -693,4 +1035,39 @@ def deploy_model_as_api(model_id):
     except Exception as e:
         logger.error(f"Error deploying model as API: {str(e)}")
         db.session.rollback()
-        return False 
+        return False
+
+def run_server(self, project):
+    """Run the federated learning server in a background thread."""
+    try:
+        # Create an application context that will be used in the thread
+        app = current_app._get_current_object()
+        
+        with app.app_context():
+            # Get server configuration
+            server_path = app.config.get('FL_SERVER_PATH', 'examples')
+            server_host = app.config.get('FL_SERVER_HOST', 'localhost')
+            server_port = app.config.get('FL_SERVER_PORT', 8080)
+            
+            # Start the server process
+            logger.info(f"Starting FL server for project {project.id}")
+            
+            try:
+                # Update project status
+                project.status = 'running'
+                project.current_round = 0
+                db.session.commit()
+                
+                # TODO: Add actual server process management here
+                # For now, we'll just simulate the server running
+                while project.status == 'running':
+                    time.sleep(5)  # Check status every 5 seconds
+                    db.session.refresh(project)
+                
+            except Exception as e:
+                logger.error(f"Error in FL server process: {str(e)}")
+                project.status = 'failed'
+                db.session.commit()
+                
+    except Exception as e:
+        logger.error(f"Error running FL server: {str(e)}") 

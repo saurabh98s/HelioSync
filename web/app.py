@@ -63,12 +63,15 @@ def create_app(config=None):
         SQLALCHEMY_DATABASE_URI='sqlite:///' + os.path.join(app.instance_path, 'app.db'),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         UPLOAD_FOLDER=os.path.join(app.instance_path, 'uploads'),
+        FL_MODEL_PATH=os.path.join(app.instance_path, 'models'),
         MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB max file size
     )
 
     # Ensure instance folder exists
     try:
         os.makedirs(app.instance_path)
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        os.makedirs(app.config['FL_MODEL_PATH'], exist_ok=True)
     except OSError:
         pass
 
