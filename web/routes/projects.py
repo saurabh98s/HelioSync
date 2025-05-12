@@ -332,7 +332,7 @@ def view_model(project_id, model_id):
     
     return render_template('projects/model.html', project=project, model=model, deployment_form=deployment_form)
 
-@projects_bp.route('/<int:project_id>/models/<int:model_id>/deploy', methods=['POST'])
+@projects_bp.route('/<int:project_id>/models/<int:model_id>/deploy', methods=['GET', 'POST'])
 @login_required
 def deploy_model(project_id, model_id):
     """Deploy a model as API or for download."""
@@ -351,20 +351,52 @@ def deploy_model(project_id, model_id):
     
     form = ModelDeploymentForm()
     
+    # If this is a GET request, show the deployment form
+    if request.method == 'GET':
+        return render_template('projects/deploy.html', project=project, model=model, form=form)
+    
+    # If this is a POST request, process the deployment
+    # Get the deployment type from the form
+    # We're handling both regular form submissions and direct inputs with hidden fields
+    current_app.logger.info(f"Form data: {request.form}")
+    
+    deploy_type = None
+    
+    # First check if the form has validated
     if form.validate_on_submit():
         deploy_type = form.deploy_type.data
+        current_app.logger.info(f"Form validated: deploy_type = {deploy_type}")
+    else:
+        # If not, check if the deploy_type is in the request.form directly
+        deploy_type = request.form.get('deploy_type')
+        current_app.logger.info(f"Form did not validate, using direct deploy_type = {deploy_type}")
         
-        # Deploy the model
-        result = ModelManager.deploy_model(model, deploy_type)
-        
-        if result.get('success'):
-            flash(f'Model deployed successfully as {deploy_type.upper()}.', 'success')
-        else:
-            flash(f'Failed to deploy model: {result.get("error")}', 'danger')
-        
+        # Check for form errors
+        if form.errors:
+            current_app.logger.warning(f"Form errors: {form.errors}")
+    
+    # Make sure we have a valid deploy_type
+    if not deploy_type or deploy_type not in ['api', 'download', 'huggingface']:
+        flash('Invalid deployment type.', 'danger')
         return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
     
-    flash('Invalid form submission.', 'danger')
+    # Deploy the model
+    current_app.logger.info(f"Deploying model {model.id} as {deploy_type}")
+    
+    if deploy_type == 'huggingface':
+        # Deploy to Hugging Face Hub
+        result = ModelManager.deploy_to_huggingface(model)
+        current_app.logger.info(f"Hugging Face deployment result: {result}")
+    else:
+        # Deploy using standard methods
+        result = ModelManager.deploy_model(model, deploy_type)
+        current_app.logger.info(f"Standard deployment result: {result}")
+    
+    if result.get('success'):
+        flash(f'Model deployed successfully as {deploy_type.upper()}.', 'success')
+    else:
+        flash(f'Failed to deploy model: {result.get("error")}', 'danger')
+    
     return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
 
 @projects_bp.route('/<int:project_id>/models/<int:model_id>/download')

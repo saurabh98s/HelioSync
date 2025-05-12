@@ -2,260 +2,383 @@
 
 {% block title %}Dashboard - Federated Learning Platform{% endblock %}
 
+{% block page_title %}Dashboard{% endblock %}
+
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="row">
-        <!-- Sidebar -->
-        <div class="col-lg-2 col-md-3 d-none d-md-block sidebar">
-            {% include 'dashboard/_sidebar.html' %}
+<!-- Activity Section -->
+<div class="activity-chart">
+    <div class="chart-header">
+        <h3 class="chart-title">Activity</h3>
+        <div class="chart-legend">
+            <div class="legend-item">
+                <span class="legend-dot primary"></span>
+                <span>This week</span>
+            </div>
+            <div class="legend-item">
+                <span class="legend-dot secondary"></span>
+                <span>Last week</span>
+            </div>
         </div>
-        
-        <!-- Main Content -->
-        <div class="col-lg-10 col-md-9 ms-auto px-4">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h1 class="h2">Dashboard</h1>
-                <div>
-                    <a href="{{ url_for('projects.create') }}" class="btn btn-primary">
-                        <i class="fas fa-plus-circle me-2"></i>New Project
-                    </a>
-                </div>
+    </div>
+    <div class="chart-controls">
+        <div class="chart-period active">Today</div>
+        <div class="chart-period">Week</div>
+    </div>
+    <div class="chart-content">
+        <canvas id="activityChart"></canvas>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Stats Section -->
+    <div class="col-md-6">
+        <div class="table-card">
+            <div class="chart-header">
+                <h3 class="chart-title">Visits</h3>
+                <div class="chart-period">Today</div>
             </div>
-            
-            <!-- Stats Cards -->
-            <div class="row mb-4">
-                <div class="col-xl-3 col-md-6 mb-4">
-                    <div class="card border-left-primary shadow h-100 py-2">
-                        <div class="card-body">
-                            <div class="row no-gutters align-items-center">
-                                <div class="col mr-2">
-                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-                                        Projects</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.projects.total }}</div>
-                                </div>
-                                <div class="col-auto">
-                                    <i class="fas fa-project-diagram fa-2x text-primary"></i>
-                                </div>
-                            </div>
-                            <div class="mt-2 small">
-                                <span class="text-success me-2">
-                                    <i class="fas fa-circle"></i> {{ stats.projects.active }} active
-                                </span>
-                                <span class="text-secondary">
-                                    <i class="fas fa-circle"></i> {{ stats.projects.completed }} completed
-                                </span>
-                            </div>
+            <div class="row text-center mt-4">
+                <div class="col-md-4">
+                    <div class="donut-chart">
+                        <canvas id="usersChart" width="140" height="140"></canvas>
+                        <div class="donut-content">
+                            <h4>{{ stats.clients.total }}</h4>
+                            <p>clients</p>
                         </div>
                     </div>
                 </div>
-
-                <div class="col-xl-3 col-md-6 mb-4">
-                    <div class="card border-left-success shadow h-100 py-2">
-                        <div class="card-body">
-                            <div class="row no-gutters align-items-center">
-                                <div class="col mr-2">
-                                    <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-                                        Clients</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.clients.total }}</div>
-                                </div>
-                                <div class="col-auto">
-                                    <i class="fas fa-laptop fa-2x text-success"></i>
-                                </div>
-                            </div>
-                            <div class="mt-2 small">
-                                <span class="text-success me-2">
-                                    <i class="fas fa-circle"></i> {{ stats.clients.active }} online
-                                </span>
-                                <span class="text-secondary">
-                                    <i class="fas fa-circle"></i> {{ stats.clients.inactive }} offline
-                                </span>
-                            </div>
+                <div class="col-md-4">
+                    <div class="donut-chart">
+                        <canvas id="viewsChart" width="140" height="140"></canvas>
+                        <div class="donut-content">
+                            <h4>{{ stats.models.total }}</h4>
+                            <p>models</p>
                         </div>
                     </div>
                 </div>
-
-                <div class="col-xl-3 col-md-6 mb-4">
-                    <div class="card border-left-info shadow h-100 py-2">
-                        <div class="card-body">
-                            <div class="row no-gutters align-items-center">
-                                <div class="col mr-2">
-                                    <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Models
-                                    </div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ stats.models.total }}</div>
-                                </div>
-                                <div class="col-auto">
-                                    <i class="fas fa-brain fa-2x text-info"></i>
-                                </div>
-                            </div>
-                            <div class="mt-2 small">
-                                <span class="text-success me-2">
-                                    <i class="fas fa-circle"></i> {{ stats.models.trained }} trained
-                                </span>
-                                <span class="text-warning">
-                                    <i class="fas fa-circle"></i> {{ stats.models.training }} training
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-xl-3 col-md-6 mb-4">
-                    <div class="card border-left-warning shadow h-100 py-2">
-                        <div class="card-body">
-                            <div class="row no-gutters align-items-center">
-                                <div class="col mr-2">
-                                    <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-                                        Organization</div>
-                                    <div class="h5 mb-0 font-weight-bold text-gray-800">{{ current_user.organization.name }}</div>
-                                </div>
-                                <div class="col-auto">
-                                    <i class="fas fa-building fa-2x text-warning"></i>
-                                </div>
-                            </div>
-                            <div class="mt-2 small">
-                                <a href="{{ url_for('organizations.view', org_id=current_user.organization.id) }}" class="text-warning">
-                                    <i class="fas fa-cog"></i> Manage
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Main Content Row -->
-            <div class="row">
-                <!-- Recent Projects -->
-                <div class="col-lg-6 mb-4">
-                    <div class="card shadow mb-4">
-                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                            <h6 class="m-0 font-weight-bold text-primary">Recent Projects</h6>
-                            <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-primary">
-                                View All
-                            </a>
-                        </div>
-                        <div class="card-body">
-                            {% if recent_projects %}
-                                <div class="table-responsive">
-                                    <table class="table table-hover">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Status</th>
-                                                <th>Framework</th>
-                                                <th>Created</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% for project in recent_projects %}
-                                                <tr>
-                                                    <td>
-                                                        <a href="{{ url_for('projects.view', project_id=project.id) }}">
-                                                            {{ project.name }}
-                                                        </a>
-                                                    </td>
-                                                    <td>
-                                                        <span class="badge bg-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'active' else 'secondary' }}">
-                                                            {{ project.status }}
-                                                        </span>
-                                                    </td>
-                                                    <td>{{ project.framework }}</td>
-                                                    <td>{{ project.created_at|formatdatetime('%b %d, %Y') }}</td>
-                                                </tr>
-                                            {% endfor %}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            {% else %}
-                                <div class="text-center py-4">
-                                    <i class="fas fa-project-diagram fa-3x text-gray-300 mb-3"></i>
-                                    <p class="mb-0">No projects yet</p>
-                                    <a href="{{ url_for('projects.create') }}" class="btn btn-primary mt-3">
-                                        <i class="fas fa-plus-circle me-2"></i>Create Project
-                                    </a>
-                                </div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Recent Clients -->
-                <div class="col-lg-6 mb-4">
-                    <div class="card shadow mb-4">
-                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
-                            <h6 class="m-0 font-weight-bold text-primary">Recent Clients</h6>
-                            <a href="{{ url_for('dashboard.clients') }}" class="btn btn-sm btn-primary">
-                                View All
-                            </a>
-                        </div>
-                        <div class="card-body">
-                            {% if recent_clients %}
-                                <div class="table-responsive">
-                                    <table class="table table-hover">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Status</th>
-                                                <th>Last Seen</th>
-                                                <th>Created</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {% for client in recent_clients %}
-                                                <tr>
-                                                    <td>
-                                                        <a href="{{ url_for('dashboard.client_detail', client_id=client.id) }}">
-                                                            {{ client.name }}
-                                                        </a>
-                                                    </td>
-                                                    <td>
-                                                        <span class="badge bg-{{ 'success' if client.status == 'active' else 'secondary' }}">
-                                                            {{ client.status }}
-                                                        </span>
-                                                    </td>
-                                                    <td>{{ client.last_seen|formatdatetime('%b %d, %Y %H:%M') if client.last_seen else 'Never' }}</td>
-                                                    <td>{{ client.created_at|formatdatetime('%b %d, %Y') }}</td>
-                                                </tr>
-                                            {% endfor %}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            {% else %}
-                                <div class="text-center py-4">
-                                    <i class="fas fa-laptop fa-3x text-gray-300 mb-3"></i>
-                                    <p class="mb-0">No clients connected yet</p>
-                                    <p class="text-muted small mt-2">Clients will appear here once they connect</p>
-                                </div>
-                            {% endif %}
+                <div class="col-md-4">
+                    <div class="donut-chart">
+                        <canvas id="likesChart" width="140" height="140"></canvas>
+                        <div class="donut-content">
+                            <h4>{{ stats.projects.total }}</h4>
+                            <p>projects</p>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Statistics Section -->
+    <div class="col-md-6">
+        <div class="table-card">
+            <div class="chart-header">
+                <h3 class="chart-title">Statistics</h3>
+            </div>
+            <div class="chart-content">
+                <canvas id="statisticsChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Project Stats Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-title">
+            <div>
+                <h4>Projects</h4>
+                <div class="stat-value">{{ stats.projects.total }}</div>
+                <div class="stat-label">Total projects in your organization</div>
+            </div>
+            <div class="stat-icon primary">
+                <i class="fas fa-project-diagram"></i>
+            </div>
+        </div>
+        <div class="stat-footer">
+            <span class="badge badge-success">{{ stats.projects.active }} active</span>
+            <span class="badge badge-primary">{{ stats.projects.completed }} completed</span>
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-title">
+            <div>
+                <h4>Clients</h4>
+                <div class="stat-value">{{ stats.clients.total }}</div>
+                <div class="stat-label">Connected devices</div>
+            </div>
+            <div class="stat-icon secondary">
+                <i class="fas fa-laptop"></i>
+            </div>
+        </div>
+        <div class="stat-footer">
+            <span class="badge badge-success">{{ stats.clients.active }} online</span>
+            <span class="badge badge-primary">{{ stats.clients.inactive }} offline</span>
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-title">
+            <div>
+                <h4>Models</h4>
+                <div class="stat-value">{{ stats.models.total }}</div>
+                <div class="stat-label">Trained models</div>
+            </div>
+            <div class="stat-icon accent">
+                <i class="fas fa-brain"></i>
+            </div>
+        </div>
+        <div class="stat-footer">
+            <span class="badge badge-success">{{ stats.models.trained }} trained</span>
+            <span class="badge badge-warning">{{ stats.models.training }} training</span>
+        </div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-title">
+            <div>
+                <h4>Organization</h4>
+                <div class="stat-value">{{ current_user.organization.name }}</div>
+                <div class="stat-label">Your organization</div>
+            </div>
+            <div class="stat-icon success">
+                <i class="fas fa-building"></i>
+            </div>
+        </div>
+        <div class="stat-footer">
+            <a href="{{ url_for('organizations.view', org_id=current_user.organization.id) }}" class="btn btn-sm btn-outline-primary">
+                <i class="fas fa-cog me-1"></i> Manage
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Projects -->
+<div class="table-card">
+    <div class="table-header">
+        <h3 class="table-title">Recent Projects</h3>
+        <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-primary">View All</a>
+    </div>
+    {% if recent_projects %}
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Framework</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for project in recent_projects %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('projects.view', project_id=project.id) }}">
+                                    {{ project.name }}
+                                </a>
+                            </td>
+                            <td>
+                                <span class="badge badge-{{ 'success' if project.status == 'completed' else 'warning' if project.status == 'active' else 'primary' }}">
+                                    {{ project.status }}
+                                </span>
+                            </td>
+                            <td>{{ project.framework }}</td>
+                            <td>{{ project.created_at|formatdatetime('%b %d, %Y') }}</td>
+                            <td>
+                                <a href="{{ url_for('projects.view', project_id=project.id) }}" class="btn btn-sm btn-primary">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-center py-4">
+            <i class="fas fa-project-diagram fa-3x text-gray-300 mb-3"></i>
+            <p class="mb-0">No projects yet</p>
+            <a href="{{ url_for('projects.create') }}" class="btn btn-primary mt-3">
+                <i class="fas fa-plus-circle me-2"></i>Create Project
+            </a>
+        </div>
+    {% endif %}
 </div>
 {% endblock %}
 
-{% block additional_css %}
+{% block extra_js %}
+<script>
+// Sample data
+const activityData = {
+  labels: ['', '', '', '', '', '', ''],
+  datasets: [
+    {
+      label: 'This Week',
+      backgroundColor: 'rgba(92, 177, 204, 0.5)',
+      borderColor: '#5cb1cc',
+      data: [202, 248, 179, 365, 293],
+      fill: true,
+      tension: 0.4
+    },
+    {
+      label: 'Last Week',
+      backgroundColor: 'rgba(231, 38, 130, 0.5)',
+      borderColor: '#e72682',
+      data: [150, 230, 180, 320, 250],
+      fill: true,
+      tension: 0.4
+    }
+  ]
+};
+
+// Create activity chart
+const ctx = document.getElementById('activityChart').getContext('2d');
+const activityChart = new Chart(ctx, {
+  type: 'line',
+  data: activityData,
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+      }
+    },
+    scales: {
+      x: {
+        ticks: { display: false },
+        grid: { display: false }
+      },
+      y: {
+        ticks: { display: false },
+        grid: { display: false }
+      }
+    },
+    elements: {
+      point: {
+        radius: 4,
+        hoverRadius: 6,
+        backgroundColor: '#ffffff',
+        borderWidth: 2
+      }
+    }
+  }
+});
+
+// Create donut charts
+function createDonutChart(elementId, value, total, color) {
+  const ctx = document.getElementById(elementId).getContext('2d');
+  return new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [value, total - value],
+        backgroundColor: [color, '#e0e0e0'],
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      cutout: '75%',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false }
+      },
+      animation: {
+        animateRotate: true,
+        animateScale: false
+      },
+      elements: {
+        arc: {
+          borderWidth: 0
+        }
+      }
+    }
+  });
+}
+
+// Create the donut charts
+createDonutChart('usersChart', {{ stats.clients.active or 0 }}, {{ stats.clients.total or 1 }}, '#5cb1cc');
+createDonutChart('viewsChart', {{ stats.models.trained or 0 }}, {{ stats.models.total or 1 }}, '#e72682');
+createDonutChart('likesChart', {{ stats.projects.active or 0 }}, {{ stats.projects.total or 1 }}, '#1cc88a');
+
+// Statistics bar chart
+const statsCtx = document.getElementById('statisticsChart').getContext('2d');
+const statsChart = new Chart(statsCtx, {
+  type: 'bar',
+  data: {
+    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+    datasets: [{
+      label: 'Models Trained',
+      data: [250, 300, 350, 280, 290, 120, 450, 310, 240, 190, 320, 340],
+      backgroundColor: '#5cb1cc'
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false }
+    },
+    scales: {
+      x: {
+        grid: { display: false }
+      },
+      y: {
+        beginAtZero: true,
+        max: 500,
+        grid: { borderDash: [2, 4] }
+      }
+    }
+  }
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
 <style>
-    .sidebar {
-        background-color: #f8f9fc;
-        min-height: calc(100vh - 70px);
-        border-right: 1px solid #e3e6f0;
-    }
-    
-    .border-left-primary {
-        border-left: 4px solid #4e73df;
-    }
-    
-    .border-left-success {
-        border-left: 4px solid #1cc88a;
-    }
-    
-    .border-left-info {
-        border-left: 4px solid #36b9cc;
-    }
-    
-    .border-left-warning {
-        border-left: 4px solid #f6c23e;
-    }
+.activity-chart {
+    position: relative;
+}
+
+.donut-chart {
+    position: relative;
+    width: 140px;
+    height: 140px;
+    margin: 0 auto 20px;
+}
+
+.donut-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+}
+
+.donut-content h4 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 500;
+}
+
+.donut-content p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-light);
+}
+
+.stat-footer {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+}
 </style>
 {% endblock %} 

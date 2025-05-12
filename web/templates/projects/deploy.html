@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}Deploy Model{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h1>Deploy Model</h1>
+            <p class="text-muted">Deploy "{{ model.name }}" (Version {{ model.version }}) for the project "{{ project.name }}"</p>
+        </div>
+        <div class="col-auto">
+            <a href="{{ url_for('projects.view_model', project_id=project.id, model_id=model.id) }}" class="btn btn-outline-primary">
+                <i class="fas fa-arrow-left me-1"></i> Back to Model
+            </a>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card shadow-sm mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Model Deployment Options</h5>
+                </div>
+                <div class="card-body">
+                    <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="mb-4">
+                            <h6>Select Deployment Type</h6>
+                            <div class="row mt-3">
+                                <div class="col-md-4">
+                                    <div class="card h-100 deployment-option">
+                                        <div class="card-body text-center">
+                                            <input type="radio" class="btn-check" name="deploy_type" id="download" value="download" autocomplete="off" checked>
+                                            <label class="btn btn-outline-primary w-100 h-100 d-flex flex-column align-items-center justify-content-center" for="download">
+                                                <i class="fas fa-download fa-2x mb-3"></i>
+                                                <h6>Download</h6>
+                                                <p class="small text-muted">Download model files for local use</p>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card h-100 deployment-option">
+                                        <div class="card-body text-center">
+                                            <input type="radio" class="btn-check" name="deploy_type" id="api" value="api" autocomplete="off">
+                                            <label class="btn btn-outline-primary w-100 h-100 d-flex flex-column align-items-center justify-content-center" for="api">
+                                                <i class="fas fa-server fa-2x mb-3"></i>
+                                                <h6>API</h6>
+                                                <p class="small text-muted">Deploy as REST API endpoint</p>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="card h-100 deployment-option">
+                                        <div class="card-body text-center">
+                                            <input type="radio" class="btn-check" name="deploy_type" id="huggingface" value="huggingface" autocomplete="off">
+                                            <label class="btn btn-outline-primary w-100 h-100 d-flex flex-column align-items-center justify-content-center" for="huggingface">
+                                                <i class="fas fa-cloud-upload-alt fa-2x mb-3"></i>
+                                                <h6>Hugging Face</h6>
+                                                <p class="small text-muted">Share model on Hugging Face Hub</p>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="huggingface-options" class="mb-4 deployment-section" style="display: none;">
+                            <h6>Hugging Face Options</h6>
+                            <div class="form-group mb-3">
+                                <label for="hf_model_name">Model Name (optional)</label>
+                                <input type="text" class="form-control" id="hf_model_name" name="hf_model_name" placeholder="federated-mnist-v{{model.version}}">
+                                <small class="form-text text-muted">A unique name for your model on Hugging Face Hub</small>
+                            </div>
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" value="true" id="hf_private" name="hf_private" checked>
+                                <label class="form-check-label" for="hf_private">
+                                    Make model private
+                                </label>
+                                <small class="form-text text-muted d-block">Private models are only accessible to you</small>
+                            </div>
+                        </div>
+                        
+                        <div id="api-options" class="mb-4 deployment-section" style="display: none;">
+                            <h6>API Options</h6>
+                            <div class="form-group mb-3">
+                                <label for="api_name">API Name (optional)</label>
+                                <input type="text" class="form-control" id="api_name" name="api_name" placeholder="model-api-{{ model.version }}">
+                                <small class="form-text text-muted">A name for your API deployment</small>
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-rocket me-1"></i> Deploy Model
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">Model Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <p><strong>Project:</strong> {{ project.name }}</p>
+                            <p><strong>Model:</strong> {{ model.name or 'Unnamed Model' }}</p>
+                            <p><strong>Version:</strong> {{ model.version }}</p>
+                            <p><strong>Created:</strong> {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <p><strong>Accuracy:</strong> {{ "%.2f%%"|format(model.metrics.get('accuracy', 0) * 100) if model.metrics else 'N/A' }}</p>
+                            <p><strong>Loss:</strong> {{ "%.4f"|format(model.metrics.get('loss', 0)) if model.metrics else 'N/A' }}</p>
+                            <p><strong>Framework:</strong> {{ project.framework }}</p>
+                            <p><strong>Dataset:</strong> {{ project.dataset_name }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block additional_js %}
+<script>
+    $(document).ready(function() {
+        // Show/hide deployment options based on selection
+        $('input[name="deploy_type"]').change(function() {
+            $('.deployment-section').hide();
+            if ($(this).val() === 'huggingface') {
+                $('#huggingface-options').show();
+            } else if ($(this).val() === 'api') {
+                $('#api-options').show();
+            }
+        });
+    });
+</script>
+{% endblock %}
+
+{% block additional_css %}
+<style>
+    .deployment-option .card-body {
+        min-height: 150px;
+    }
+    
+    .btn-check:checked + .btn-outline-primary {
+        background-color: #f0f8ff;
+        border-color: #0d6efd;
+    }
+</style>
+{% endblock %} 

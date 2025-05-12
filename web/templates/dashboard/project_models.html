@@ -82,9 +82,13 @@
                                 <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=project.global_model.id) }}" class="btn btn-sm btn-primary">
                                     <i class="bi bi-download"></i> Download Model
                                 </a>
-                                <a href="{{ url_for('projects.deploy_model', project_id=project.id, model_id=project.global_model.id) }}" class="btn btn-sm btn-success">
-                                    <i class="bi bi-cloud-upload"></i> Deploy Model
-                                </a>
+                                <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=project.global_model.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="deploy_type" value="huggingface">
+                                    <button type="submit" class="btn btn-sm btn-success w-100">
+                                        <i class="bi bi-cloud-upload"></i> Deploy to Hugging Face
+                                    </button>
+                                </form>
                             </div>
                         </li>
                     </ul>
@@ -128,12 +132,16 @@
                             <td>{{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                             <td>
                                 <div class="btn-group" role="group">
-                                    <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" label='Download Model' class="btn btn-sm btn-outline-primary">
                                         <i class="bi bi-download"></i>
                                     </a>
-                                    <a href="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-success">
-                                        <i class="bi bi-cloud-upload"></i>
-                                    </a>
+                                    <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST" style="display: inline;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="deploy_type" value="huggingface">
+                                        <button type="submit" class="btn btn-sm btn-outline-success">
+                                            <i class="bi bi-cloud-upload"></i>
+                                        </button>
+                                    </form>
                                 </div>
                             </td>
                         </tr>

@@ -31,10 +31,31 @@
                 </div>
                 <div>
                     {% if model.is_final and not model.is_deployed %}
-                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#deployModelModal">
-                            <i class="fas fa-rocket me-1"></i> Deploy Model
+                        <div class="btn-group me-2" role="group">
+                            <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="deploy_type" value="download">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-rocket me-1"></i> Deploy for Download
+                                </button>
+                            </form>
+                        </div>
+                        
+                        <div class="btn-group me-2" role="group">
+                            <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="deploy_type" value="huggingface">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-cloud-upload-alt me-1"></i> Deploy to Hugging Face
+                                </button>
+                            </form>
+                        </div>
+                        
+                        <button type="button" class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#deployModelModal">
+                            <i class="fas fa-cog me-1"></i> Advanced Deployment
                         </button>
                     {% endif %}
+                    
                     {% if model.is_final or model.is_deployed %}
                         <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" class="btn btn-info">
                             <i class="fas fa-download me-1"></i> Download
@@ -42,6 +63,25 @@
                     {% endif %}
                 </div>
             </div>
+            
+            <!-- Warning for non-downloadable models -->
+            {% if model.path is none or not model.path %}
+                <div class="alert alert-warning mb-4">
+                    <i class="fas fa-exclamation-triangle me-2"></i> 
+                    <strong>Warning:</strong> This model may not be downloadable because its file path is not properly set.
+                </div>
+            {% endif %}
+            
+            <!-- HuggingFace Link if deployed there -->
+            {% if model.is_deployed and model.deployment_info and model.deployment_info.get('type') == 'huggingface' %}
+                <div class="alert alert-success mb-4">
+                    <i class="fas fa-globe me-2"></i>
+                    <strong>Hugging Face Hub Deployment:</strong> 
+                    This model is deployed to <a href="{{ model.deployment_info.get('huggingface_url') }}" target="_blank" class="alert-link">
+                        Hugging Face Hub <i class="fas fa-external-link-alt small"></i>
+                    </a>
+                </div>
+            {% endif %}
             
             <!-- Model Details Row -->
             <div class="row mb-4">
@@ -61,12 +101,18 @@
                                     <p><strong>Size:</strong> {% if model.size is defined %}{{ (model.size / 1024 / 1024)|round(2) }} MB{% else %}Unknown{% endif %}</p>
                                     <p><strong>Contributors:</strong> {% if model.clients_count is defined %}{{ model.clients_count }}{% else %}{{ model.metrics.get('clients', 0) if model.metrics else 0 }}{% endif %} clients</p>
                                     {% if model.is_deployed %}
-                                        <p><strong>Deployed:</strong> {{ model.deployed_at.strftime('%Y-%m-%d %H:%M') }}</p>
+                                        <p><strong>Deployed:</strong> 
+                                            {% if model.deployment_info and model.deployment_info.get('timestamp') %}
+                                                {{ model.deployment_info.get('timestamp')|string|truncate(19, True, '')|replace('T', ' ') }}
+                                            {% else %}
+                                                Unknown
+                                            {% endif %}
+                                        </p>
                                     {% endif %}
                                 </div>
                             </div>
                             
-                            {% if model.is_deployed and model.deployment_type == 'api' %}
+                            {% if model.is_deployed and model.deployment_info and model.deployment_info.get('type') == 'api' %}
                                 <div class="alert alert-info">
                                     <h6><i class="fas fa-server me-2"></i> API Deployment</h6>
                                     <p class="mb-2">This model is available via API endpoint:</p>
@@ -382,7 +428,7 @@ print(results)
                 <p>How would you like to deploy this model?</p>
                 
                 <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST">
-                    {{ deployment_form.csrf_token }}
+                    {{ deployment_form.hidden_tag() }}
                     
                     <div class="mb-3">
                         {{ deployment_form.deploy_type.label(class="form-label") }}

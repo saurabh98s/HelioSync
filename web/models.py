@@ -232,23 +232,103 @@ class ProjectClient(db.Model):
 
 
 class Model(db.Model):
-    """Model for trained federated learning models."""
+    """Machine learning model trained via federated learning."""
+    
     __tablename__ = 'models'
-
+    
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id'), nullable=False)
     version = db.Column(db.Integer, default=1)
-    path = db.Column(db.String(255), nullable=True)  # Path to the saved model file
-    metrics = db.Column(db.JSON, nullable=True)  # Model metrics (accuracy, loss, etc.)
+    accuracy = db.Column(db.Float, default=0.0)
+    loss = db.Column(db.Float, default=0.0)
+    clients_count = db.Column(db.Integer, default=0)
+    path = db.Column(db.String(255))
+    framework = db.Column(db.String(50), default='tensorflow')
+    is_final = db.Column(db.Boolean, default=False)
+    is_deployed = db.Column(db.Boolean, default=False)
+    deployment_info = db.Column(db.JSON)
+    additional_paths = db.Column(db.JSON)
+    _metrics = db.Column('metrics', db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    is_final = db.Column(db.Boolean, default=False)  # Is this the final model of the project
-    is_deployed = db.Column(db.Boolean, default=False)  # Is this model deployed
-    deployment_info = db.Column(db.JSON, nullable=True)  # Information about deployment
-    clients_count = db.Column(db.Integer, default=0)  # Number of clients that contributed to this model
-    is_sample = db.Column(db.Boolean, default=False)  # Whether this is a sample model for demonstration
-
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
     # Relationships
     project = db.relationship('Project', back_populates='models')
+    
+    def __init__(self, **kwargs):
+        super(Model, self).__init__(**kwargs)
+        # Initialize metrics with default values if not provided
+        if self._metrics is None:
+            self._metrics = {
+                'accuracy': self.accuracy,
+                'loss': self.loss,
+                'clients': self.clients_count,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+    
+    @property
+    def metrics(self):
+        """Getter for metrics that ensures it's never None."""
+        if self._metrics is None:
+            # Create a default metrics object if needed
+            self._metrics = {
+                'accuracy': self.accuracy,
+                'loss': self.loss,
+                'clients': self.clients_count,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        
+        # Ensure required fields are present
+        if isinstance(self._metrics, dict):
+            # Required metrics fields with defaults
+            required_fields = {
+                'accuracy': self.accuracy,
+                'loss': self.loss,
+                'clients': self.clients_count,
+                'timestamp': self._metrics.get('timestamp', datetime.utcnow().isoformat()),
+                'round': self._metrics.get('round', 0)
+            }
+            
+            # Add missing fields to metrics
+            for field, default_value in required_fields.items():
+                if field not in self._metrics:
+                    self._metrics[field] = default_value
+        
+        return self._metrics
+    
+    @metrics.setter
+    def metrics(self, value):
+        """Setter for metrics that validates the value."""
+        if value is None:
+            # Always initialize a default dict if None
+            value = {
+                'accuracy': self.accuracy,
+                'loss': self.loss,
+                'clients': self.clients_count,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        elif not isinstance(value, dict):
+            # If not a dict, create a wrapper dict
+            value = {
+                'data': str(value),
+                'accuracy': self.accuracy,
+                'loss': self.loss,
+                'clients': self.clients_count,
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        
+        # Normalize numeric values to avoid template errors
+        for field in ['accuracy', 'loss', 'val_accuracy', 'val_loss']:
+            if field in value and value[field] is not None:
+                try:
+                    # Convert to float and check if it's a valid number
+                    float_val = float(value[field])
+                    if not (isinstance(float_val, float) and float_val == float_val):  # Check for NaN
+                        value[field] = 0.0
+                except (ValueError, TypeError):
+                    value[field] = 0.0
+        
+        self._metrics = value
 
     def __repr__(self):
         return f'<Model {self.project_id}:{self.version}>'

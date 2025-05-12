@@ -379,11 +379,13 @@ class FederatedClient:
                                     'round': current_round,
                                     'samples': len(self.x_train),
                                     'project_id': project_id,
-                                    'is_final': is_final_round  # Set final flag based on round number
+                                    # Only set is_final to True if we're actually sending the final update
+                                    # This ensures the project isn't marked as completed prematurely
+                                    'is_final': is_final_round and not self.final_update_sent
                                 }
                                 
                                 if is_final_round:
-                                    print(f"\n*** SENDING FINAL UPDATE FOR PROJECT {project_id} ***")
+                                    print(f"\n*** SENDING UPDATE FOR FINAL ROUND OF PROJECT {project_id} ***")
                                     print(f"*** CURRENT ROUND: {current_round}, TOTAL ROUNDS: {total_rounds} ***")
                                     print(f"*** IS_FINAL FLAG SET TO: {final_metrics['is_final']} ***\n")
                                 

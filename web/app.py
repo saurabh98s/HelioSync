@@ -52,10 +52,26 @@ def init_db(app):
 
 def init_fl_server(app):
     """Initialize the federated learning server."""
-    # Import here to avoid circular imports
-    from web.services.fl_manager import FederatedLearningServer
-    app.fl_server = FederatedLearningServer()
-    app.logger.info("Federated Learning Server initialized")
+    try:
+        # Import here to avoid circular imports
+        from web.services.fl_manager import FederatedLearningServer
+        
+        # Create the server instance
+        fl_server = FederatedLearningServer()
+        
+        # Store it both as app.fl_server and in config for backward compatibility
+        app.fl_server = fl_server
+        app.config['FL_SERVER'] = fl_server
+        
+        app.logger.info("Federated Learning Server initialized successfully")
+    except Exception as e:
+        app.logger.error(f"Error initializing Federated Learning Server: {str(e)}")
+        import traceback
+        app.logger.error(traceback.format_exc())
+        
+        # Set to None to avoid attribute errors
+        app.fl_server = None
+        app.config['FL_SERVER'] = None
 
 def create_app(config=None):
     """Create and configure the Flask application."""
@@ -79,7 +95,17 @@ def create_app(config=None):
     except OSError:
         pass
 
-    # Load configuration
+    # Load configuration from the config.env file through our Config class
+    from web.config import Config
+    app.config.from_object(Config)
+    
+    # Set HUGGINGFACE_TOKEN in the config if available in environment
+    huggingface_token = os.environ.get('HUGGINGFACE_TOKEN')
+    if huggingface_token:
+        app.config['HUGGINGFACE_TOKEN'] = huggingface_token
+        app.logger.info("Hugging Face token loaded from environment")
+
+    # Load additional configuration if provided
     if config is not None:
         if isinstance(config, str):
             # Load config from config file
@@ -115,6 +141,12 @@ def create_app(config=None):
     # Initialize federated learning server after db is set up
     with app.app_context():
         init_fl_server(app)
+    
+    # Log if HUGGINGFACE_TOKEN is available
+    if app.config.get('HUGGINGFACE_TOKEN'):
+        app.logger.info("Hugging Face Token is configured and available for model deployment")
+    else:
+        app.logger.warning("Hugging Face Token not found in configuration - model deployment to Hugging Face Hub will not work")
     
     # Configure login
     login_manager.login_view = 'auth.login'

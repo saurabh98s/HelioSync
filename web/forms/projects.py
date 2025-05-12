@@ -47,7 +47,8 @@ class ModelDeploymentForm(FlaskForm):
     """Form for deploying models."""
     deploy_type = SelectField('Deployment Type', choices=[
         ('api', 'REST API'),
-        ('download', 'File Download')
+        ('download', 'File Download'),
+        ('huggingface', 'Hugging Face Hub')
     ], validators=[DataRequired()])
     
     submit = SubmitField('Deploy Model')
