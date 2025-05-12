@@ -187,16 +187,7 @@ class FederatedClient:
         self.heartbeat_thread.start()
     
     def _retry_request(self, request_fn, max_retries=None, is_final=False):
-        """Generic retry function for network requests with exponential backoff.
-        
-        Args:
-            request_fn: Function that makes the actual request
-            max_retries: Maximum number of retries (default: self.max_retries)
-            is_final: Whether this is a final update request (more aggressive retries)
-            
-        Returns:
-            Response object or None if all retries failed
-        """
+        """Retry a request with exponential backoff."""
         if max_retries is None:
             max_retries = self.max_retries if not is_final else self.max_retries * 2
             
@@ -205,6 +196,17 @@ class FederatedClient:
         for attempt in range(max_retries):
             try:
                 response = request_fn()
+                
+                # Handle 5xx server errors with retries
+                if response.status_code >= 500:
+                    print(f"Server error: {response.status_code} (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        jitter = random.uniform(0, 1)
+                        delay = min(retry_delay * (1.5 ** attempt) + jitter, 60)  # More gradual backoff
+                        print(f"Retrying in {delay:.1f} seconds...")
+                        time.sleep(delay)
+                        continue
+                
                 return response
             except requests.exceptions.RequestException as e:
                 print(f"Network error (attempt {attempt+1}/{max_retries}): {e}")
@@ -212,7 +214,7 @@ class FederatedClient:
                 if attempt < max_retries - 1:
                     # Use exponential backoff with jitter for more robust retries
                     jitter = random.uniform(0, 1)
-                    delay = min(retry_delay * (2 ** attempt) + jitter, 120)  # Cap at 2 minutes
+                    delay = min(retry_delay * (1.5 ** attempt) + jitter, 60)  # More gradual backoff
                     
                     if is_final:
                         print(f"This is a FINAL update, will retry more aggressively.")
@@ -235,14 +237,31 @@ class FederatedClient:
     
     def _training_loop(self):
         """Main training loop."""
+        consecutive_failures = 0
+        max_consecutive_failures = 10  # After this many failures, pause for longer
+        
+        # Backoff strategy for "no projects" state
+        no_projects_count = 0
+        no_projects_max_backoff = 60  # Maximum seconds to wait between polls when no projects
+        
         while self.is_training:
             try:
+                # If we've been in "no projects" state for a while, use longer timeouts
+                use_short_timeout = True
+                timeout = 15
+                
+                # Adapt timeout based on no_projects_count
+                if no_projects_count > 5:
+                    # After 5 consecutive "no projects" responses, use longer timeouts
+                    timeout = min(10 + (no_projects_count * 2), 45)  # Gradually increase up to 45 sec
+                
                 # Define the request function
                 def get_tasks():
                     return requests.get(
                         f"{self.server_url}/api/clients/{self.client_id}/tasks",
                         headers={'X-API-Key': self.api_key},
-                        timeout=30
+                        params={'short_timeout': use_short_timeout},  # Use short timeout version 
+                        timeout=timeout  # Adaptive timeout
                     )
                 
                 # Use retry mechanism
@@ -250,13 +269,28 @@ class FederatedClient:
                 
                 if response and response.status_code == 200:
                     data = response.json()
+                    
+                    # Check if we're waiting for projects
+                    if data.get('status') == 'waiting' and 'No active projects' in data.get('message', ''):
+                        no_projects_count += 1
+                        wait_time = min(5 * (1.5 ** min(no_projects_count, 6)), no_projects_max_backoff)
+                        print(f"No active projects available. Waiting {wait_time:.1f} seconds before checking again. (Poll #{no_projects_count})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        # Reset no_projects counter if we got a different response
+                        no_projects_count = 0
+                    
                     if data.get('status') == 'success' or data.get('status') == 'training':
+                        consecutive_failures = 0  # Reset failure counter on success
+                        
                         # Extract project details
                         details = data.get('details', {})
                         project_id = details.get('project_id')
                         current_round = details.get('round', 0)
                         total_rounds = details.get('total_rounds', 0)
                         weights = details.get('weights', [])
+                        weights_available = details.get('weights_available', False)
                         dataset_name = details.get('dataset', 'mnist')
                         
                         # Store the project_id and current round
@@ -272,7 +306,34 @@ class FederatedClient:
                                 print("Haven't sent final update yet. Proceeding with training one more time.")
                             else:
                                 # We've already sent our final update or aren't in the final round, so we can stop
-                                break
+                                time.sleep(10)  # Wait before checking again
+                                continue  # Skip to next iteration instead of breaking
+                        
+                        # If the response indicated weights are available but didn't include them (short_timeout mode)
+                        # make a second request to get the weights
+                        if not weights and weights_available:
+                            print("Lightweight response received, requesting full weights...")
+                            
+                            def get_full_weights():
+                                return requests.get(
+                                    f"{self.server_url}/api/clients/{self.client_id}/tasks",
+                                    headers={'X-API-Key': self.api_key},
+                                    params={'project_id': project_id},  # Request specific project
+                                    timeout=60  # Longer timeout for full weights request
+                                )
+                            
+                            full_response = self._retry_request(get_full_weights)
+                            if full_response and full_response.status_code == 200:
+                                full_data = full_response.json()
+                                weights = full_data.get('details', {}).get('weights', [])
+                                if not weights:
+                                    print("Failed to get weights in second request. Waiting before retrying...")
+                                    time.sleep(15)
+                                    continue
+                            else:
+                                print("Failed to get full weights. Waiting before retrying...")
+                                time.sleep(15)
+                                continue
                         
                         # Get model weights and update local model
                         if weights:
@@ -379,9 +440,9 @@ class FederatedClient:
                                     'round': current_round,
                                     'samples': len(self.x_train),
                                     'project_id': project_id,
-                                    # Only set is_final to True if we're actually sending the final update
-                                    # This ensures the project isn't marked as completed prematurely
-                                    'is_final': is_final_round and not self.final_update_sent
+                                    # Set is_final to True if this is the final round
+                                    # This tells the server to aggregate and save the final model
+                                    'is_final': is_final_round
                                 }
                                 
                                 if is_final_round:
@@ -398,7 +459,7 @@ class FederatedClient:
                                             'metrics': final_metrics
                                         },
                                         headers={'X-API-Key': self.api_key},
-                                        timeout=60 if is_final_round else 30  # Longer timeout for final updates
+                                        timeout=120 if is_final_round else 60  # Increased timeout for model updates
                                     )
                                 
                                 # Use retry mechanism with more aggressive settings for final updates
@@ -467,6 +528,9 @@ class FederatedClient:
                             except ValueError as e:
                                 print(f"Error applying weights: {e}")
                                 print("Weight mismatch. This might be due to incompatible model architectures.")
+                        else:
+                            print("No weights received in task. Waiting before trying again...")
+                            time.sleep(15)
                     elif data.get('status') == 'waiting':
                         print(f"Waiting: {data.get('message', 'No active projects')}")
                         # Sleep longer when waiting for projects
@@ -474,18 +538,25 @@ class FederatedClient:
                     else:
                         print(f"Server response: {data.get('message', 'Unknown response')}")
                 else:
+                    # Response error or no response
+                    error_msg = "Failed to get tasks"
                     if response:
-                        print(f"Error getting tasks: {response.status_code}")
-                        if hasattr(response, 'text'):
-                            print(f"Response text: {response.text}")
-                    else:
-                        print("Failed to get tasks after multiple retries.")
-            
+                        error_msg += f" - Status code: {response.status_code}"
+                    
+                    print(f"{error_msg} after multiple retries.")
+                    
+                    # Increment failure counter and wait with exponential backoff
+                    consecutive_failures += 1
+                    wait_time = min(10 * 1.5 ** min(consecutive_failures, 8), 180)  # Cap at 3 minutes
+                    
+                    print(f"Waiting {wait_time:.1f} seconds before retry ({consecutive_failures} consecutive failures)")
+                    time.sleep(wait_time)
             except Exception as e:
-                print(f"Error in training loop: {e}")
-                import traceback
-                print(traceback.format_exc())
-                time.sleep(5)
+                print(f"Error in training loop: {str(e)}")
+                traceback.print_exc()
+                
+                # Safety wait after unexpected error
+                time.sleep(30)
             
             # Small delay between iterations
             time.sleep(2)

@@ -316,10 +316,9 @@ class FederatedServer:
             print(f"Not enough clients connected. Need {self.min_clients}, have {len(self.clients)}")
             return False
         
-        # Reset round updates
-        with self.updates_lock:
-            self.round_updates = {}
-            self.round_metrics[self.current_round] = []
+        # Calculate minimum updates needed to proceed
+        min_updates_needed = max(int(len(self.clients) * 0.5), self.min_clients)  # At least 50% of clients or min_clients
+        print(f"Need at least {min_updates_needed} client updates to proceed with round")
         
         # Update all client statuses to 'training'
         with self.status_lock:
@@ -327,12 +326,19 @@ class FederatedServer:
                 self.client_statuses[client_id] = 'training'
                 print(f"Set client {client_id} status to training")
         
-        # Wait for updates from all clients
+        # Wait for updates from enough clients
         start_time = time.time()
-        while len(self.round_updates) < len(self.clients):
-            if time.time() - start_time > 300:  # 5 minutes timeout
-                print("Round timeout - proceeding with available updates")
+        while len(self.round_updates) < min_updates_needed:
+            # If we've waited a long time but have some updates, proceed anyway
+            if time.time() - start_time > 300 and len(self.round_updates) > 0:  # 5 minutes timeout
+                print(f"Round timeout - proceeding with {len(self.round_updates)} updates (wanted {min_updates_needed})")
                 break
+                
+            # If we've waited even longer and still have no updates, abort round
+            if time.time() - start_time > 600:  # 10 minutes timeout
+                print("Round complete timeout with no updates - aborting round")
+                return False
+                
             time.sleep(1)
         
         # Aggregate updates if we have any
@@ -341,11 +347,35 @@ class FederatedServer:
             self.aggregate_updates()
             self.current_round += 1
             
+            # Save aggregated model
+            try:
+                # Get the weights of the aggregated model
+                weights = self.model.get_weights()
+                
+                # Save the aggregated model to disk
+                model_save_path = f"models/federated_round_{self.current_round}.h5"
+                os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+                self.model.save(model_save_path)
+                print(f"Saved aggregated model to {model_save_path}")
+            except Exception as e:
+                print(f"Failed to save aggregated model: {e}")
+            
             # Update client statuses to 'ready'
             with self.status_lock:
                 for client_id in self.clients:
                     self.client_statuses[client_id] = 'ready'
                     print(f"Set client {client_id} status to ready")
+            
+            # Check if we've reached the final round
+            if self.current_round >= self.rounds:
+                print(f"Completed all {self.rounds} rounds of training")
+                # Save final model
+                try:
+                    final_model_path = "models/federated_final.h5"
+                    self.model.save(final_model_path)
+                    print(f"Saved final model to {final_model_path}")
+                except Exception as e:
+                    print(f"Failed to save final model: {e}")
             
             return True
         

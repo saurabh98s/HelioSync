@@ -4,19 +4,31 @@ API Routes
 This module provides API endpoints for client device communication with the server.
 """
 
-import json
-from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app
-from functools import wraps
-import numpy as np
+import os
 import logging
+import tempfile
+import json
+import zipfile
+import secrets
 import traceback
+from datetime import datetime, timedelta
+from functools import wraps
+
+from flask import Blueprint, request, jsonify, current_app, send_file
+from flask_login import current_user
 
 from web.app import db
 from web.models import ApiKey, Organization, Client, Project, ProjectClient
 
 # Create blueprint
 api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+# Cache for project availability (to speed up repeated no-project checks)
+_project_cache = {
+    'last_updated': datetime.utcnow(),
+    'has_projects': False,
+    'by_organization': {}
+}
 
 def require_api_key(view_func):
     """Decorator to check for valid API key in request."""
@@ -155,54 +167,134 @@ def register_client():
 @require_api_key
 def get_client_tasks(client_id):
     """Get training tasks for a client."""
+    global _project_cache
+    
     try:
-        # Get the federated learning server instance
-        fl_server = current_app.fl_server
-        
-        if not fl_server:
-            return jsonify({
-                "status": "error",
-                "message": "Federated learning server not initialized"
-            }), 500
-        
-        # Check if client is registered
-        client = Client.query.filter_by(client_id=client_id).first()
+        # Quick check for client existence to avoid deeper processing if invalid
+        client = Client.query.filter_by(client_id=client_id).with_entities(Client.id, Client.organization_id).first()
         if not client:
             return jsonify({
                 "status": "error",
                 "message": "Client not found"
             }), 404
+            
+        # Check if client is requesting a short timeout version (lightweight response)
+        short_timeout = request.args.get('short_timeout', 'false').lower() == 'true'
         
-        # Get client's active projects
-        active_projects = fl_server.get_client_projects(client_id)
-        if not active_projects:
+        # Check for project_id parameter - direct project request
+        project_id = request.args.get('project_id')
+        if project_id:
+            # Specific project requested - no need for caching
+            project = Project.query.get(project_id)
+            
+            if not project:
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Project {project_id} not found'
+                }), 404
+            
+            # If project is completed, notify client
+            if project.status == 'completed':
+                return jsonify({
+                    'status': 'waiting',
+                    'message': f'Project {project_id} is already completed',
+                    'details': {
+                        'project_id': project_id,
+                        'project_status': 'completed'
+                    }
+                })
+        else:
+            # Check cache first to quickly return "no projects" without DB query
+            cache_age = (datetime.utcnow() - _project_cache['last_updated']).total_seconds()
+            org_id = client.organization_id
+            
+            # Use cache if recent (less than 30 seconds old)
+            if cache_age < 30 and org_id in _project_cache['by_organization']:
+                if not _project_cache['by_organization'][org_id]:
+                    # No projects available based on cache
+                    return jsonify({
+                        'status': 'waiting',
+                        'message': 'No active projects for your organization (cached)',
+                        'details': {}
+                    })
+            
+            # Need to query for projects - update cache
+            projects_query = Project.query.join(Project.organizations).filter(
+                Project.status == 'running',
+                Organization.id == org_id
+            )
+            
+            # Optimize query to just count first
+            projects_exist = db.session.query(projects_query.exists()).scalar()
+            
+            # Update cache
+            _project_cache['last_updated'] = datetime.utcnow()
+            _project_cache['by_organization'][org_id] = projects_exist
+            
+            if not projects_exist:
+                return jsonify({
+                    'status': 'waiting',
+                    'message': 'No active projects for your organization',
+                    'details': {}
+                })
+            
+            # If we get here, projects exist, so get the actual projects
+            projects = projects_query.order_by(Project.created_at.desc()).all()
+            
+            # Always select the most active project (the one with most clients)
+            # This ensures all clients join the same project for federated learning
+            if projects:
+                # Count clients per project to find the most active one
+                project_client_counts = {}
+                for p in projects:
+                    count = ProjectClient.query.filter_by(project_id=p.id).count()
+                    project_client_counts[p.id] = count
+                
+                # Sort projects by client count (descending) then by creation date (newest first)
+                sorted_projects = sorted(
+                    projects, 
+                    key=lambda p: (-project_client_counts.get(p.id, 0), -p.id)
+                )
+                
+                # Select the most active project
+                project = sorted_projects[0]
+                
+                # Assign client to this project if not already assigned
+                client_assignment = ProjectClient.query.filter_by(
+                    client_id=client.id, project_id=project.id
+                ).first()
+                
+                if not client_assignment:
+                    client_assignment = ProjectClient(
+                        project_id=project.id,
+                        client_id=client.id,
+                        status='active'
+                    )
+                    db.session.add(client_assignment)
+                    db.session.commit()
+            else:
+                project = None
+        
+        # Get the federated learning server instance
+        fl_server = current_app.fl_server
+        if not fl_server:
             return jsonify({
-                "status": "waiting",
-                "message": "No active projects available. Please wait for project assignment.",
-                "details": {
-                    "client_id": client_id,
-                    "is_connected": client.is_connected,
-                    "last_heartbeat": client.last_heartbeat.isoformat() if client.last_heartbeat else None
-                }
-            })
-        
-        # For now, we'll use the first active project
-        # In a real implementation, you might want to handle multiple projects
-        project_id = active_projects[0]
-        project = Project.query.get(project_id)
-        
+                "status": "error",
+                "message": "Federated learning server not initialized"
+            }), 500
+            
         if not project:
             return jsonify({
                 "status": "error",
-                "message": f"Project {project_id} not found"
-            }), 404
+                "message": "No suitable project found"
+            }), 500
         
         if project.status != 'running':
             return jsonify({
                 "status": "waiting",
                 "message": f"Project {project.name} is not currently running",
                 "details": {
-                    "project_id": project_id,
+                    "project_id": project.id,
                     "project_name": project.name,
                     "project_status": project.status,
                     "current_round": project.current_round,
@@ -212,21 +304,30 @@ def get_client_tasks(client_id):
         
         try:
             # Get current model weights for the project
-            weights = [w.tolist() for w in fl_server.get_model_weights(project_id)]
+            weights = [w.tolist() for w in fl_server.get_model_weights(project.id)]
             
-            return jsonify({
+            # For short timeout requests, don't include weights to speed up response
+            response_data = {
                 "status": "training",
                 "message": "Training task available",
                 "details": {
-                    "project_id": project_id,
+                    "project_id": project.id,
                     "project_name": project.name,
                     "round": fl_server.current_round,
                     "total_rounds": project.rounds,
                     "framework": project.framework,
-                    "dataset": project.dataset_name,
-                    "weights": weights
+                    "dataset": project.dataset_name
                 }
-            })
+            }
+            
+            # Only include weights for full requests
+            if not short_timeout:
+                response_data["details"]["weights"] = weights
+            else:
+                # Include a flag indicating weights are available but not included
+                response_data["details"]["weights_available"] = True
+            
+            return jsonify(response_data)
             
         except Exception as e:
             current_app.logger.error(f"Error getting model weights: {str(e)}")
@@ -235,7 +336,7 @@ def get_client_tasks(client_id):
                 "message": "Error getting model weights",
                 "details": {
                     "error": str(e),
-                    "project_id": project_id,
+                    "project_id": project.id,
                     "project_name": project.name
                 }
             }), 500
@@ -266,469 +367,187 @@ def model_update(client_id):
         # Check if this is the final update - this impacts many decisions below
         is_final = metrics.get('is_final', False)
         
+        # First step: Record that we received the update so client doesn't timeout
+        # This quick initial response prevents client timeouts
+        if weights and project_id:
+            # Start a background thread to process the update
+            def process_update_async():
+                try:
+                    # All the processing code that was previously here
+                    process_model_update(client_id, project_id, weights, metrics, is_final)
+                except Exception as e:
+                    logging.error(f"Async model update processing error: {str(e)}")
+                    logging.error(traceback.format_exc())
+            
+            # Start background thread
+            import threading
+            update_thread = threading.Thread(target=process_update_async)
+            update_thread.daemon = True
+            update_thread.start()
+            
+            # Return success immediately while processing continues in background
+            return jsonify({
+                'status': 'success',
+                'message': 'Model update received and processing started',
+                'details': {
+                    'project_id': project_id,
+                    'is_final_update': is_final,
+                    'background_processing': True
+                }
+            })
+        
         # Get the client
         client = Client.query.filter_by(client_id=client_id).first()
         if not client:
-            # For final updates, be more lenient about missing clients
-            if is_final:
-                logging.warning(f"Client {client_id} not found for final update. Creating temporary client record.")
-                try:
-                    # Find an organization to attach the client to
-                    org = Organization.query.first()
-                    if not org:
-                        return jsonify({
-                            'status': 'error',
-                            'message': 'Cannot create client - no organization found'
-                        }), 500
-                    
-                    # Create a temporary client record
-                    client = Client(
-                        client_id=client_id,
-                        name=f"Client {client_id} (Temporary)",
-                        organization_id=org.id,
-                        is_connected=True,
-                        last_heartbeat=datetime.utcnow()
-                    )
-                    db.session.add(client)
-                    db.session.commit()
-                    logging.info(f"Created temporary client record for final update: {client_id}")
-                except Exception as client_err:
-                    logging.error(f"Failed to create temporary client: {str(client_err)}")
-                    # For final updates, we'll still try to continue
-                    if not is_final:
-                        return jsonify({
-                            'status': 'error',
-                            'message': 'Client not found and could not create temporary record'
-                        }), 404
-            else:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Client not found'
-                }), 404
+            # Normal handling for client not found...
+            return jsonify({'status': 'error', 'message': 'Client not found'}), 404
         
-        # Always update client last seen time, regardless of success or failure
+        # Always update client last seen time
         if client:
             client.last_seen = datetime.utcnow()
             db.session.commit()
         
-        # Get all client projects
-        if project_id:
-            project = Project.query.get(project_id)
+        # Just return success if we have nothing to process
+        return jsonify({
+            'status': 'success',
+            'message': 'Model update received (no weights or project_id)'
+        })
             
-            # Special handling for missing projects on final updates
-            if not project and is_final:
-                logging.warning(f"Project {project_id} not found for final update. Creating temporary project.")
-                try:
-                    # Find a user to set as creator
-                    from web.models import User
-                    creator = User.query.filter_by(is_admin=True).first()
-                    if not creator:
-                        creator = User.query.first()
-                    
-                    if not creator:
-                        # Last resort - create through direct SQL
-                        try:
-                            db.session.execute(
-                                f"INSERT INTO projects (id, name, status, current_round, rounds, min_clients, dataset_name, framework, creator_id, created_at) "
-                                f"VALUES ({project_id}, 'Project {project_id} (Recovered)', 'running', 0, 1, 1, 'unknown', 'tensorflow', 1, CURRENT_TIMESTAMP)"
-                            )
-                            db.session.commit()
-                            project = Project.query.get(project_id)
-                            logging.info(f"Created temporary project through SQL: {project_id}")
-                        except Exception as sql_err:
-                            logging.error(f"SQL insert failed: {str(sql_err)}")
-                            return jsonify({
-                                'status': 'error',
-                                'message': f'Project {project_id} not found and could not create temporary record'
-                            }), 404
-                    else:
-                        # Create a basic project record for recording the final model
-                        project = Project(
-                            id=project_id,
-                            name=f"Project {project_id} (Recovered)",
-                            status="running",
-                            current_round=0,
-                            rounds=1,
-                            min_clients=1,
-                            dataset_name="unknown",
-                            framework="tensorflow",
-                            creator_id=creator.id
-                        )
-                        db.session.add(project)
-                        db.session.commit()
-                        logging.info(f"Created temporary project {project_id} for final update")
-                except Exception as create_err:
-                    logging.error(f"Failed to create temporary project: {str(create_err)}")
-                    # For final updates, we can try one more time with direct SQL
-                    try:
-                        logging.warning(f"Attempting direct SQL insertion for project {project_id}")
-                        db.session.execute(
-                            f"INSERT INTO projects (id, name, status, creator_id, dataset_name, framework, min_clients, rounds) "
-                            f"VALUES ({project_id}, 'Emergency Project {project_id}', 'running', 1, 'unknown', 'tensorflow', 1, 1)"
-                        )
-                        db.session.commit()
-                        project = Project.query.get(project_id)
-                    except Exception as sql_err:
-                        logging.error(f"Direct SQL insertion also failed: {str(sql_err)}")
-                        return jsonify({
-                            'status': 'error',
-                            'message': f'Project {project_id} not found and could not create temporary record'
-                        }), 404
-            elif not project:
-                return jsonify({
-                    'status': 'error',
-                    'message': f'Project {project_id} not found'
-                }), 404
-            
-            # Check if the project is already completed
-            if project.status == 'completed':
-                # If this is the final update, we should still process it as there could be
-                # race conditions where the client hasn't received the completed status yet
-                if is_final:
-                    logging.info(f"Received final update from client {client_id} for project {project_id}, "
-                               f"even though project is marked completed. Will process this update.")
-                else:
-                    # Not the final update, so just inform client project is completed
-                    # but continue processing it for metrics tracking
-                    logging.info(f"Project {project_id} is completed, but still processing update for metrics tracking")
-            
-            # Update model weights in FL server
-            server = current_app.fl_server
-            
-            # If server missing but this is a final update, try harder to recover
-            if not server and is_final:
-                try:
-                    logging.info("Server not available but this is a final update. Initializing a new server instance.")
-                    from web.services.fl_manager import FederatedLearningServer
-                    server = FederatedLearningServer()
-                    current_app.fl_server = server
-                except Exception as init_err:
-                    logging.error(f"Failed to initialize new FL server: {str(init_err)}")
-            
-            if server:
-                # Log the final update status
-                if is_final:
-                    logging.info(f"Received FINAL update from client {client_id} for project {project_id}")
-                    logging.info(f"Metrics: {metrics}")
-                
-                try:
-                    # Update the model with the client's weights
-                    success = server.update_model(client_id, weights, metrics, project_id)
-                    
-                    if success:
-                        # Get latest project status after update
-                        db.session.refresh(project)
-                        
-                        # For final updates, make sure the project is marked as completed
-                        if is_final and project.status != 'completed':
-                            logging.info(f"Ensuring project {project_id} is marked as completed for final update")
-                            project.status = 'completed'
-                            db.session.commit()
-                            logging.info(f"Project {project_id} status updated to 'completed'")
-                        elif not is_final and project.status == 'completed':
-                            # Fix bug: If project is mistakenly marked as completed but this is not a final update,
-                            # change it back to running if we're still actively training
-                            logging.warning(f"Project {project_id} was marked as completed but is still receiving updates. Resetting to 'running'.")
-                            project.status = 'running'
-                            db.session.commit()
-                        
-                        return jsonify({
-                            'status': 'success',
-                            'message': 'Model updated successfully',
-                            'details': {
-                                'project_status': project.status,
-                                'project_id': project_id,
-                                'current_round': project.current_round,
-                                'total_rounds': project.rounds,
-                                'is_final_update': is_final
-                            }
-                        })
-                    else:
-                        # If this is a final update, try to handle failure specially
-                        if is_final:
-                            logging.warning(f"Final update returned failure but ensuring project completion anyway")
-                            # Force the project to be completed
-                            project.status = 'completed'
-                            db.session.commit()
-                            
-                            # Try to create a minimal model record
-                            try:
-                                from web.services.model_manager import ModelManager
-                                
-                                model_data = {
-                                    'accuracy': metrics.get('accuracy', 0),
-                                    'loss': metrics.get('loss', 0),
-                                    'val_accuracy': metrics.get('val_accuracy', 0),
-                                    'val_loss': metrics.get('val_loss', 0),
-                                    'clients': 1,
-                                    'round': 0,
-                                    'is_emergency_recovery': True
-                                }
-                                
-                                # Create a minimal final model
-                                ModelManager.save_model(project, model_data, is_final=True)
-                                
-                                return jsonify({
-                                    'status': 'success',
-                                    'message': 'Final model saved despite update error',
-                                    'details': {
-                                        'project_status': 'completed',
-                                        'project_id': project_id
-                                    }
-                                })
-                            except Exception as model_err:
-                                logging.error(f"Failed to create minimal model: {str(model_err)}")
-                                # Still return success for final updates
-                                if is_final:
-                                    return jsonify({
-                                        'status': 'success',
-                                        'message': 'Project marked as completed despite errors',
-                                        'details': {
-                                            'project_status': 'completed',
-                                            'project_id': project_id,
-                                            'error_recovery': True
-                                        }
-                                    })
-                        
-                        return jsonify({
-                            'status': 'error',
-                            'message': 'Error updating model'
-                        }), 500
-                except Exception as e:
-                    logging.error(f"Error updating model via FL server: {str(e)}")
-                    
-                    # If this is a final update, make sure it's handled properly
-                    if is_final:
-                        try:
-                            # Special handling for final updates to ensure they're processed
-                            logging.info(f"Retrying final update processing for client {client_id}, project {project_id}")
-                            
-                            # Ensure the project is marked as completed
-                            project.status = 'completed'
-                            db.session.commit()
-                            
-                            # Try to create a minimal model
-                            from web.services.model_manager import ModelManager
-                            model_data = {
-                                'accuracy': metrics.get('accuracy', 0),
-                                'loss': metrics.get('loss', 0),
-                                'val_accuracy': metrics.get('val_accuracy', 0),
-                                'val_loss': metrics.get('val_loss', 0),
-                                'clients': 1,
-                                'is_emergency_recovery': True
-                            }
-                            
-                            ModelManager.save_model(project, model_data, is_final=True)
-                            
-                            return jsonify({
-                                'status': 'success',
-                                'message': 'Final update processed despite errors',
-                                'details': {
-                                    'project_status': 'completed',
-                                    'project_id': project_id,
-                                    'emergency_recovery': True
-                                }
-                            })
-                        except Exception as retry_e:
-                            logging.error(f"Recovery attempt failed: {str(retry_e)}")
-                            
-                            # Last resort - just return success
-                            return jsonify({
-                                'status': 'success',
-                                'message': 'Project marked as completed despite errors',
-                                'details': {
-                                    'project_status': 'completed',
-                                    'project_id': project_id,
-                                    'emergency_recovery': True
-                                }
-                            })
-                    
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'Server error: {str(e)}'
-                    }), 500
-            else:
-                # For any update (but especially final ones), don't immediately return 503
-                # Try to recover by initializing a new server
-                if is_final:
-                    try:
-                        logging.info("Attempting emergency recovery for final update")
-                        
-                        # Ensure project is marked as completed
-                        project.status = 'completed'
-                        db.session.commit()
-                        
-                        # Create a minimal model entry
-                        from web.services.model_manager import ModelManager
-                        model_data = {
-                            'accuracy': metrics.get('accuracy', 0),
-                            'loss': metrics.get('loss', 0),
-                            'val_accuracy': metrics.get('val_accuracy', 0),
-                            'val_loss': metrics.get('val_loss', 0),
-                            'clients': 1,
-                            'is_emergency_recovery': True
-                        }
-                        
-                        ModelManager.save_model(project, model_data, is_final=True)
-                        
-                        return jsonify({
-                            'status': 'success',
-                            'message': 'Final update processed in emergency mode',
-                            'details': {
-                                'project_status': 'completed',
-                                'project_id': project_id,
-                                'emergency_recovery': True
-                            }
-                        })
-                    except Exception as emergency_error:
-                        logging.error(f"Emergency recovery failed: {str(emergency_error)}")
-                        
-                        # Last resort for final updates - just tell client it succeeded
-                        if is_final:
-                            try:
-                                project.status = 'completed'
-                                db.session.commit()
-                            except Exception:
-                                pass
-                                
-                            return jsonify({
-                                'status': 'success',
-                                'message': 'Project marked as completed (emergency last resort)',
-                                'details': {
-                                    'project_status': 'completed',
-                                    'project_id': project_id,
-                                    'extreme_emergency': True
-                                }
-                            })
-                
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Federated Learning server not available'
-                }), 503
-        else:
-            # No project_id provided, try to find the first active project for the client
-            project_client = ProjectClient.query.filter_by(client_id=client.id).first()
-            
-            if project_client:
-                project_id = project_client.project_id
-                
-                # Update model weights in FL server
-                server = current_app.fl_server
-                if server:
-                    try:
-                        success = server.update_model(client_id, weights, metrics, project_id)
-                        
-                        if success:
-                            return jsonify({
-                                'status': 'success',
-                                'message': 'Model updated successfully',
-                                'details': {
-                                    'project_id': project_id
-                                }
-                            })
-                        else:
-                            return jsonify({
-                                'status': 'error',
-                                'message': 'Error updating model'
-                            }), 500
-                    except Exception as e:
-                        logging.error(f"Error updating model: {str(e)}")
-                        return jsonify({
-                            'status': 'error',
-                            'message': f'Server error: {str(e)}'
-                        }), 500
-                else:
-                    return jsonify({
-                        'status': 'error',
-                        'message': 'Federated Learning server not available'
-                    }), 503
-            else:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'No active project found for client'
-                }), 404
-                
     except Exception as e:
         logging.error(f"Error in model_update: {str(e)}")
-        import traceback
         logging.error(traceback.format_exc())
-        
-        # For final updates, attempt emergency recovery
-        try:
-            data = request.get_json()
-            metrics = data.get('metrics', {})
-            is_final = metrics.get('is_final', False)
-            project_id = metrics.get('project_id')
-            
-            if is_final and project_id:
-                try:
-                    # Get or create the project
-                    project = Project.query.get(project_id)
-                    if not project:
-                        # Try direct SQL as last resort
-                        db.session.execute(
-                            f"INSERT INTO projects (id, name, status, creator_id, dataset_name, framework, min_clients, rounds) "
-                            f"VALUES ({project_id}, 'Last Resort Project {project_id}', 'completed', 1, 'unknown', 'tensorflow', 1, 1)"
-                        )
-                        db.session.commit()
-                        project = Project.query.get(project_id)
-                    
-                    if project:
-                        project.status = 'completed'
-                        db.session.commit()
-                        return jsonify({
-                            'status': 'success',
-                            'message': 'Project marked as completed (extreme emergency recovery)',
-                            'details': {
-                                'project_status': 'completed',
-                                'project_id': project_id,
-                                'extreme_emergency': True
-                            }
-                        })
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        
         return jsonify({
             'status': 'error',
             'message': f'Internal server error: {str(e)}'
         }), 500
+
+def process_model_update(client_id, project_id, weights, metrics, is_final):
+    """Background processing function for model updates."""
+    # All the update processing code from the original model_update function
+    try:
+        # Get the client
+        client = Client.query.filter_by(client_id=client_id).first()
+        if not client:
+            logging.error(f"Client {client_id} not found in background update")
+            return
+        
+        # Always update client last seen time
+        client.last_seen = datetime.utcnow()
+        db.session.commit()
+        
+        # Find the project
+        project = Project.query.get(project_id)
+        if not project:
+            logging.error(f"Project {project_id} not found in background update")
+            return
+        
+        # Update model weights in FL server
+        server = current_app.fl_server
+        if not server:
+            logging.error("FL server not available in background update")
+            return
+        
+        # Log the final update status
+        if is_final:
+            logging.info(f"Processing FINAL update from client {client_id} for project {project_id}")
+            
+            # Determine if this is actually the final round
+            is_final_round = project.current_round >= (project.rounds - 1)
+            
+            # Only mark as final in the server if we're actually in the final round
+            if is_final_round:
+                logging.info(f"Confirming this is the final round ({project.current_round}/{project.rounds})")
+            else:
+                logging.warning(f"Client sent final flag but project is only at round {project.current_round}/{project.rounds}")
+                # Override is_final flag if we're not actually in the final round
+                is_final = False
+        
+        # Update the model with the client's weights
+        success = server.update_model(client_id, weights, metrics, project_id)
+        
+        if success:
+            # Get latest project status after update
+            db.session.refresh(project)
+            
+            # Update client-project association to track participation
+            client_project = ProjectClient.query.filter_by(
+                client_id=client.id, project_id=project.id
+            ).first()
+            
+            if client_project:
+                client_project.last_update = datetime.utcnow()
+                client_project.training_samples = metrics.get('samples', 0)
+                client_project.status = 'completed' if is_final else 'training'
+                
+                # Store metrics as JSON
+                if not client_project.metrics:
+                    client_project.metrics = {}
+                
+                # Update metrics with latest round
+                round_metrics = {
+                    'round': project.current_round,
+                    'loss': metrics.get('loss', 0),
+                    'accuracy': metrics.get('accuracy', 0),
+                    'val_loss': metrics.get('val_loss', 0),
+                    'val_accuracy': metrics.get('val_accuracy', 0)
+                }
+                
+                # Add to metrics history
+                metrics_dict = dict(client_project.metrics)  # Convert from JSON
+                if 'rounds' not in metrics_dict:
+                    metrics_dict['rounds'] = []
+                metrics_dict['rounds'].append(round_metrics)
+                client_project.metrics = metrics_dict
+                
+                db.session.commit()
+            
+            # For final updates, make sure the project is marked as completed
+            if is_final and project.status != 'completed':
+                # Ensure project has actually progressed through enough rounds
+                if project.current_round >= (project.rounds - 1):
+                    logging.info(f"Marking project {project_id} as completed for final update")
+                    project.status = 'completed'
+                    db.session.commit()
+                else:
+                    logging.warning(f"Not marking project as completed: only at round {project.current_round} of {project.rounds}")
+            
+            logging.info(f"Successfully processed model update for client {client_id}, project {project_id}")
+        else:
+            logging.error(f"Failed to process model update for client {client_id}, project {project_id}")
+        
+    except Exception as e:
+        logging.error(f"Error in background model update: {str(e)}")
+        logging.error(traceback.format_exc())
 
 @api_bp.route('/clients/<client_id>/heartbeat', methods=['POST'])
 @require_api_key
 def client_heartbeat(client_id):
     """Handle client heartbeat to update last seen timestamp."""
     try:
-        client = Client.query.filter_by(client_id=client_id).first()
+        # Optimized query that just updates timestamp without fetching the client first
+        updated = db.session.query(Client).filter_by(client_id=client_id).update({
+            'last_heartbeat': datetime.utcnow(),
+            'is_connected': True
+        })
         
-        if not client:
+        db.session.commit()
+        
+        if not updated:
             return jsonify({
                 "status": "error",
                 "message": "Client not found"
             }), 404
         
-        client.last_heartbeat = datetime.utcnow()
-        client.is_connected = True
-        db.session.commit()
-        
         return jsonify({
             "status": "success",
-            "message": "Heartbeat received",
-            "details": {
-                "client_id": client_id,
-                "last_heartbeat": client.last_heartbeat.isoformat()
-            }
+            "message": "Heartbeat received"
         })
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error(f"Error updating heartbeat: {str(e)}")
         return jsonify({
             "status": "error",
-            "message": "Error updating heartbeat",
-            "details": {
-                "error": str(e),
-                "client_id": client_id
-            }
+            "message": "Error updating heartbeat"
         }), 500
 
 @api_bp.route('/clients/tasks', methods=['GET'])
