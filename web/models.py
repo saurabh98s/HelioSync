@@ -245,6 +245,7 @@ class Model(db.Model):
     is_deployed = db.Column(db.Boolean, default=False)  # Is this model deployed
     deployment_info = db.Column(db.JSON, nullable=True)  # Information about deployment
     clients_count = db.Column(db.Integer, default=0)  # Number of clients that contributed to this model
+    is_sample = db.Column(db.Boolean, default=False)  # Whether this is a sample model for demonstration
 
     # Relationships
     project = db.relationship('Project', back_populates='models')

@@ -1,0 +1,37 @@
+938/938 [===========================>..] 
+Sending metrics to server for round 0, epoch 1:      
+Loss: 0.2870, Accuracy: 0.9346
+Val Loss: 0.1352, Val Accuracy: 0.9664
+Project is already completed: Update received but project is completed
+938/938 [==============================] - 155s 161ms/step - loss: 0.2870 - accuracy: 0.9346 - val_loss: 0.1352 - val_accuracy: 0.9664
+
+938/938 [==============================] - ETA: 0s - loss: 0.1121 - accuracy: 0.9682
+Sending metrics to server for round 0, epoch 2:      
+Loss: 0.1121, Accuracy: 0.9682
+Val Loss: 0.1532, Val Accuracy: 0.9578
+Project is already completed: Update received but project is completed
+938/938 [==============================] - 152s 162ms/step - loss: 0.1121 - accuracy: 0.9682 - val_loss: 0.1532 - val_accuracy: 0.9578
+
+938/938 [==============================] - ETA: 0s - loss: 0.0977 - accuracy: 0.9700
+Sending metrics to server for round 0, epoch 3:      
+Loss: 0.0977, Accuracy: 0.9700
+Val Loss: 0.1109, Val Accuracy: 0.9672
+Project is already completed: Update received but project is completed
+938/938 [==============================] - 150s 160ms/step - loss: 0.0977 - accuracy: 0.9700 - val_loss: 0.1109 - val_accuracy: 0.9672
+
+938/938 [==============================] - ETA: 0s - loss: 0.0845 - accuracy: 0.9741
+Sending metrics to server for round 0, epoch 4:      
+Loss: 0.0845, Accuracy: 0.9741
+Val Loss: 0.1051, Val Accuracy: 0.9698
+Project is already completed: Update received but project is completed
+938/938 [==============================] - 147s 157ms/step - loss: 0.0845 - accuracy: 0.9741 - val_loss: 0.1051 - val_accuracy: 0.9698
+
+
+Val Loss: 0.0917, Val Accuracy: 0.9741
+Project is already completed: Update received but project is completed
+938/938 [==============================] - 148s 158ms/step - loss: 0.0817 - accuracy: 0.9745 - val_loss: 0.0917 - val_accuracy: 0.9741
+Project is already completed: Update received but project is completed
+Waiting: No active projects
+Details: {'current_round': 0, 'project_id': 1, 'project_name': 'MNIST Project', 'project_status': 'completed', 'total_rounds': 1}
+Waiting: No active projects
+Details: {'current_round': 0, 'project_id': 1, 'project_name': 'MNIST Project', 'project_status': 'completed', 'total_rounds': 1}

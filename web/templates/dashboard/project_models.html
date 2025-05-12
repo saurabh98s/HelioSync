@@ -31,14 +31,14 @@
                         <div class="row">
                             <div class="col-md-6">
                                 <p><strong>Status:</strong> 
-                                    <span class="badge bg-{{ 'success' if project.global_model.status == 'completed' else 'warning' if project.global_model.status == 'training' else 'secondary' }}">
-                                        {{ project.global_model.status }}
+                                    <span class="badge bg-{{ 'success' if project.global_model.is_final else 'secondary' }}">
+                                        {{ "Completed" if project.global_model.is_final else "Training" }}
                                     </span>
                                 </p>
-                                <p><strong>Accuracy:</strong> {{ "%.2f"|format(project.global_model.accuracy * 100) }}%</p>
-                                <p><strong>Loss:</strong> {{ "%.4f"|format(project.global_model.loss) }}</p>
+                                <p><strong>Accuracy:</strong> {{ "%.2f"|format(project.global_model.metrics.get("accuracy", 0) * 100) }}%</p>
+                                <p><strong>Loss:</strong> {{ "%.4f"|format(project.global_model.metrics.get("loss", 0)) }}</p>
                                 <p><strong>Created:</strong> {{ project.global_model.created_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
-                                <p><strong>Last Updated:</strong> {{ project.global_model.updated_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
+                                <p><strong>Last Updated:</strong> {{ project.global_model.created_at|formatdatetime('%b %d, %Y %H:%M') }}</p>
                             </div>
                             <div class="col-md-6">
                                 <div class="d-flex justify-content-end">
@@ -89,8 +89,8 @@
                                                     {{ model.status }}
                                                 </span>
                                             </td>
-                                            <td>{{ "%.2f"|format(model.accuracy * 100) }}%</td>
-                                            <td>{{ "%.4f"|format(model.loss) }}</td>
+                                            <td>{{ "%.2f"|format(model.metrics.get("accuracy", 0) * 100) }}%</td>
+                                            <td>{{ "%.4f"|format(model.metrics.get("loss", 0)) }}</td>
                                             <td>{{ model.updated_at|formatdatetime('%b %d, %Y %H:%M') }}</td>
                                             <td>
                                                 <div class="btn-group">

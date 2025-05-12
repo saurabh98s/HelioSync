@@ -20,9 +20,6 @@ from web.extensions import db, login_manager, migrate, csrf
 # Import models
 from web.models import User, Organization
 
-# Import FL server
-from web.services.fl_manager import FederatedLearningServer
-
 def init_db(app):
     """Initialize the database."""
     with app.app_context():
@@ -52,6 +49,13 @@ def init_db(app):
             db.session.add(admin)
             db.session.commit()
             print('Created admin user')
+
+def init_fl_server(app):
+    """Initialize the federated learning server."""
+    # Import here to avoid circular imports
+    from web.services.fl_manager import FederatedLearningServer
+    app.fl_server = FederatedLearningServer()
+    app.logger.info("Federated Learning Server initialized")
 
 def create_app(config=None):
     """Create and configure the Flask application."""
@@ -108,8 +112,9 @@ def create_app(config=None):
     login_manager.init_app(app)
     csrf.init_app(app)
     
-    # Initialize federated learning server
-    app.fl_server = FederatedLearningServer()
+    # Initialize federated learning server after db is set up
+    with app.app_context():
+        init_fl_server(app)
     
     # Configure login
     login_manager.login_view = 'auth.login'

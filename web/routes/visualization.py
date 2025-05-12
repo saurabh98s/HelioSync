@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import random
 from flask_sqlalchemy import SQLAlchemy
 from web.extensions import db
+import os
 
 # Create blueprint
 visualization_bp = Blueprint('visualization', __name__)
@@ -26,32 +27,37 @@ def index():
     return render_template('visualization/index.html', projects=projects)
 
 def create_sample_models(project):
-    """Create sample models for visualization if none exist."""
-    if not project.models:
-        from datetime import datetime, timedelta
-        
-        # Create 5 sample models with increasing accuracy
-        for i in range(5):
-            model = Model(
-                project_id=project.id,
-                version=i + 1,
-                metrics={
-                    'accuracy': 0.5 + (i * 0.1),  # Accuracy increases from 0.5 to 0.9
-                    'loss': 1.0 - (i * 0.15),     # Loss decreases from 1.0 to 0.25
-                    'round': i + 1
-                },
-                clients_count=project.min_clients,
-                created_at=datetime.now() - timedelta(days=i)
-            )
-            db.session.add(model)
-        
-        try:
+    """
+    Create sample models for visualization if none exist.
+    NOTE: This function is no longer used as we're only showing real models now.
+    """
+    current_app.logger.info("Sample model creation is disabled")
+    return False
+
+def remove_sample_models(project_id):
+    """Remove sample models when real models are available."""
+    try:
+        # Get sample models
+        sample_models = Model.query.filter_by(project_id=project_id, is_sample=True).all()
+        if sample_models:
+            current_app.logger.info(f"Removing {len(sample_models)} sample models for project {project_id}")
+            
+            # Delete sample model files
+            for model in sample_models:
+                if model.path and os.path.exists(model.path):
+                    try:
+                        os.remove(model.path)
+                    except Exception as e:
+                        current_app.logger.error(f"Error removing sample model file {model.path}: {str(e)}")
+            
+            # Delete sample models from database
+            Model.query.filter_by(project_id=project_id, is_sample=True).delete()
             db.session.commit()
             return True
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"Error creating sample models: {str(e)}")
-            return False
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error removing sample models: {str(e)}")
+    
     return False
 
 @visualization_bp.route('/project/<int:project_id>')
@@ -62,40 +68,92 @@ def project_metrics(project_id):
     if not current_user.is_admin and project.creator_id != current_user.id:
         abort(403)
     
-    # Create sample models if none exist
-    create_sample_models(project)
+    # Only get real models - no sample models
+    models = Model.query.filter_by(project_id=project.id, is_sample=False).order_by(Model.version).all()
     
-    # Get real metrics data from models
-    models = Model.query.filter_by(project_id=project.id).order_by(Model.version).all()
+    if models:
+        current_app.logger.info(f"Using {len(models)} real models for visualization")
+    else:
+        current_app.logger.info("No real models available for visualization")
     
     # Generate dates based on model creation times
     dates = [model.created_at.strftime('%Y-%m-%d') for model in models] if models else []
     
-    # Initialize data structures with default values
+    # Get the FL server metrics if available
+    fl_server = current_app.fl_server
+    server_metrics = {}
+    client_metrics = []
+    
+    if fl_server and project_id in fl_server.aggregated_metrics:
+        server_metrics = fl_server.aggregated_metrics[project_id]
+        
+        # Add server metrics if newer than the latest model
+        if models and server_metrics.get('timestamp'):
+            server_timestamp = server_metrics.get('timestamp')
+            if isinstance(server_timestamp, str):
+                try:
+                    server_timestamp = datetime.fromisoformat(server_timestamp)
+                except ValueError:
+                    server_timestamp = datetime.utcnow()  # Default to now if parsing fails
+            
+            latest_model_time = models[-1].created_at
+            if server_timestamp > latest_model_time:
+                # Add server metrics as if it's the next model version
+                dates.append(server_timestamp.strftime('%Y-%m-%d'))
+        
+        # Get client metrics
+        for client_id, client_data in fl_server.client_metrics.items():
+            if project_id in client_data:
+                client_metrics.append({
+                    'client_id': client_id,
+                    'metrics': client_data[project_id]
+                })
+    
+    # Initialize data structures
     accuracy_data = {
-        'global': [0.0] if not models else [model.metrics.get('accuracy', 0.0) for model in models],
-        'clients': [[0.0] * len(dates)] * project.min_clients  # Initialize client data with zeros
+        'global': [model.metrics.get('accuracy', 0.0) for model in models] if models else [],
+        'clients': []
     }
     
     loss_data = {
-        'global': [0.0] if not models else [model.metrics.get('loss', 0.0) for model in models],
-        'clients': [[0.0] * len(dates)] * project.min_clients  # Initialize client data with zeros
+        'global': [model.metrics.get('loss', 0.0) for model in models] if models else [],
+        'clients': []
     }
+    
+    # Add server metrics if they exist and are newer
+    if server_metrics and 'accuracy' in server_metrics:
+        accuracy_data['global'].append(server_metrics['accuracy'])
+        loss_data['global'].append(server_metrics['loss'])
+    
+    # Add client metrics
+    for i, client_metric in enumerate(client_metrics):
+        metrics = client_metric['metrics']
+        
+        # Initialize client arrays if needed
+        while len(accuracy_data['clients']) <= i:
+            accuracy_data['clients'].append([0.0] * len(dates))
+            loss_data['clients'].append([0.0] * len(dates))
+        
+        # Add client metrics for the latest date
+        if dates:
+            accuracy_data['clients'][i][-1] = metrics.get('accuracy', 0.0)
+            loss_data['clients'][i][-1] = metrics.get('loss', 0.0)
     
     # Get client participation data
-    client_counts = [model.clients_count for model in models] if models else [0]
-    participation_data = {
-        'dates': dates if dates else [datetime.now().strftime('%Y-%m-%d')],
-        'values': client_counts
-    }
+    client_counts = [model.clients_count for model in models] if models else []
     
-    # If we don't have any models yet, show message
-    if not models:
-        flash('No models available for this project yet.', 'info')
+    # Add server client count if available
+    if server_metrics and 'clients' in server_metrics:
+        client_counts.append(server_metrics['clients'])
+    
+    participation_data = {
+        'dates': dates if dates else [datetime.utcnow().strftime('%Y-%m-%d')],
+        'values': client_counts if client_counts else [0]
+    }
     
     return render_template('visualization/project_metrics.html',
                          project=project,
-                         dates=dates if dates else [datetime.now().strftime('%Y-%m-%d')],
+                         dates=dates if dates else [datetime.utcnow().strftime('%Y-%m-%d')],
                          accuracy_data=accuracy_data,
                          loss_data=loss_data,
                          participation_data=participation_data)
@@ -144,8 +202,13 @@ def get_project_metrics(project_id):
     if not current_user.is_admin and project.creator_id != current_user.id:
         abort(403)
     
-    # Get all models for this project to show progression
-    models = Model.query.filter_by(project_id=project_id).order_by(Model.version).all()
+    # Only get real models - no sample models
+    models = Model.query.filter_by(project_id=project.id, is_sample=False).order_by(Model.version).all()
+    
+    if models:
+        current_app.logger.info(f"API: Using {len(models)} real models for metrics")
+    else:
+        current_app.logger.info("API: No real models available for metrics")
     
     # Prepare data for visualization
     versions = []
@@ -178,7 +241,8 @@ def get_project_metrics(project_id):
         'active_clients': active_clients,
         'current_round': project.current_round,
         'total_rounds': project.rounds,
-        'status': project.status
+        'status': project.status,
+        'using_sample_data': False  # Always using real data now
     })
 
 @visualization_bp.route('/metrics')

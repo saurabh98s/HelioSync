@@ -31,6 +31,7 @@ class FederatedLearningServer:
         self.model_weights = {}  # Maps project_id to model weights
         self.aggregated_metrics = {}  # Maps project_id to metrics
         self.client_weights = {}  # Maps project_id to dict of client weights
+        self.client_metrics = {}  # Maps client_id to metrics
         self.projects = {}  # Maps project_id to project info
         self.current_round = 0
         self.rounds = 0
@@ -262,32 +263,60 @@ class FederatedLearningServer:
             if client_id not in self.client_metrics:
                 self.client_metrics[client_id] = {}
             
+            # Store all metrics in a consistent format
             self.client_metrics[client_id][project_id] = {
-                'accuracy': metrics.get('accuracy', 0),
-                'loss': metrics.get('loss', 0),
-                'epochs': metrics.get('epochs', 0),
-                'timestamp': datetime.utcnow()
+                'accuracy': float(metrics.get('accuracy', 0)),
+                'loss': float(metrics.get('loss', 0)),
+                'val_accuracy': float(metrics.get('val_accuracy', 0)),
+                'val_loss': float(metrics.get('val_loss', 0)),
+                'epoch': int(metrics.get('epoch', 0)),
+                'total_epochs': int(metrics.get('total_epochs', 0)),
+                'round': int(metrics.get('round', 0)),
+                'samples': int(metrics.get('samples', 0)),
+                'timestamp': datetime.utcnow().isoformat()
             }
+            
+            # Get the client from the database
+            client = Client.query.filter_by(client_id=client_id).first()
+            if not client:
+                logger.warning(f"Client {client_id} not found in database when updating metrics")
+                return False
             
             # Update project client status
             project_client = ProjectClient.query.filter_by(
                 project_id=project_id,
-                client_id=client_id
+                client_id=client.id
             ).first()
             
             if project_client:
-                project_client.status = 'completed'
-                project_client.accuracy = metrics.get('accuracy', 0)
-                project_client.loss = metrics.get('loss', 0)
-                project_client.local_epochs = metrics.get('epochs', 0)
+                project_client.status = 'training'
+                project_client.metrics = {
+                    'accuracy': float(metrics.get('accuracy', 0)),
+                    'loss': float(metrics.get('loss', 0)),
+                    'val_accuracy': float(metrics.get('val_accuracy', 0)),
+                    'val_loss': float(metrics.get('val_loss', 0)),
+                    'epoch': int(metrics.get('epoch', 0)),
+                    'total_epochs': int(metrics.get('total_epochs', 0)),
+                    'round': int(metrics.get('round', 0)),
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                project_client.training_samples = int(metrics.get('samples', 0))
+                project_client.local_epochs = int(metrics.get('total_epochs', 0))
                 project_client.last_update = datetime.utcnow()
                 db.session.commit()
+                
+                logger.info(f"Updated metrics for client {client_id} in project {project_id}")
+                logger.info(f"Accuracy: {metrics.get('accuracy', 0):.4f}, Loss: {metrics.get('loss', 0):.4f}")
+                logger.info(f"Val Accuracy: {metrics.get('val_accuracy', 0):.4f}, Val Loss: {metrics.get('val_loss', 0):.4f}")
+            else:
+                logger.warning(f"ProjectClient association not found for client {client_id} and project {project_id}")
             
-            logger.info(f"Updated metrics for client {client_id} in project {project_id}")
             return True
             
         except Exception as e:
             logger.error(f"Error updating metrics for client {client_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             db.session.rollback()
             return False
     
@@ -513,14 +542,37 @@ class FederatedLearningServer:
     def update_model(self, client_id, weights, metrics, project_id=None):
         """Update the model with client's weights."""
         try:
+            # Extract project_id from metrics if not provided
             if project_id is None:
-                # Update first project if no project_id specified
-                if not self.model_weights:
-                    raise ValueError("No projects initialized")
-                project_id = list(self.model_weights.keys())[0]
+                project_id = metrics.get('project_id')
+                
+            if project_id is None:
+                logger.error("No project_id provided or found in metrics")
+                logger.error(f"Available metrics: {metrics}")
+                # Try to find the first project the client is assigned to
+                if client_id in self.client_projects and self.client_projects[client_id]:
+                    project_id = next(iter(self.client_projects[client_id]))
+                    logger.info(f"Using first available project for client: {project_id}")
+                else:
+                    # Try to get the first active project
+                    if self.model_weights:
+                        project_id = list(self.model_weights.keys())[0]
+                        logger.info(f"Using first available project: {project_id}")
+                    else:
+                        raise ValueError("No projects initialized and no project_id provided")
+            
+            logger.info(f"Processing update from client {client_id} for project {project_id}")
             
             if project_id not in self.model_weights:
-                raise ValueError(f"Project {project_id} not initialized")
+                logger.error(f"Project {project_id} not initialized")
+                # Try to initialize it if the project exists
+                project = Project.query.get(project_id)
+                if project and project.status == 'running':
+                    success = self.initialize_project(project)
+                    if not success:
+                        raise ValueError(f"Failed to initialize project {project_id}")
+                else:
+                    raise ValueError(f"Project {project_id} not found or not running")
             
             # Update client metrics
             self.update_client_metrics(client_id, project_id, metrics)
@@ -536,7 +588,7 @@ class FederatedLearningServer:
                 'metrics': metrics
             }
             
-            # Get number of clients for this project
+            # Get the project
             project = Project.query.get(project_id)
             if not project:
                 raise ValueError(f"Project {project_id} not found")
@@ -546,10 +598,12 @@ class FederatedLearningServer:
             active_project_clients = len(self.client_weights.get(project_id, {}))
             
             logger.info(f"Received update from client {client_id} for project {project_id}")
-            logger.info(f"Active clients: {active_project_clients}/{project_clients_count}")
+            logger.info(f"Active clients: {active_project_clients}/{project_clients_count} (min required: {project.min_clients})")
             
-            # If we have updates from all clients, aggregate them
+            # If we have updates from enough clients, aggregate them
             if active_project_clients >= project.min_clients:
+                logger.info(f"Aggregating weights for project {project_id} from {active_project_clients} clients")
+                
                 # Perform federated averaging
                 aggregated_weights = self._aggregate_weights(project_id)
                 
@@ -563,6 +617,8 @@ class FederatedLearningServer:
                 # Calculate the average metrics
                 avg_accuracy = 0
                 avg_loss = 0
+                avg_val_accuracy = 0
+                avg_val_loss = 0
                 total_samples = 0
                 
                 for client_data in self.client_weights[project_id].values():
@@ -571,44 +627,77 @@ class FederatedLearningServer:
                     total_samples += samples
                     avg_accuracy += client_metrics.get('accuracy', 0) * samples
                     avg_loss += client_metrics.get('loss', 0) * samples
+                    avg_val_accuracy += client_metrics.get('val_accuracy', 0) * samples
+                    avg_val_loss += client_metrics.get('val_loss', 0) * samples
                 
                 if total_samples > 0:
                     avg_accuracy /= total_samples
                     avg_loss /= total_samples
+                    avg_val_accuracy /= total_samples
+                    avg_val_loss /= total_samples
                 
                 # Update aggregated metrics
                 self.aggregated_metrics[project_id].update({
-                    'accuracy': avg_accuracy,
-                    'loss': avg_loss,
-                    'round': self.current_round,
-                    'timestamp': datetime.utcnow(),
-                    'clients': active_project_clients
+                    'accuracy': float(avg_accuracy),
+                    'loss': float(avg_loss),
+                    'val_accuracy': float(avg_val_accuracy),
+                    'val_loss': float(avg_val_loss),
+                    'round': project.current_round,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'clients': active_project_clients,
+                    'total_samples': total_samples
                 })
+                
+                logger.info(f"Updated aggregated metrics for project {project_id}:")
+                logger.info(f"Accuracy: {avg_accuracy:.4f}, Loss: {avg_loss:.4f}")
+                logger.info(f"Val Accuracy: {avg_val_accuracy:.4f}, Val Loss: {avg_val_loss:.4f}")
                 
                 # Check if we should advance to the next round
                 if project.current_round < project.rounds:
                     # Increment round
-                    self.current_round += 1
                     project.current_round += 1
                     db.session.commit()
                     
+                    # Save a model version for this round
+                    try:
+                        from web.services.model_manager import ModelManager
+                        
+                        model_data = {
+                            'accuracy': float(avg_accuracy),
+                            'loss': float(avg_loss),
+                            'val_accuracy': float(avg_val_accuracy),
+                            'val_loss': float(avg_val_loss),
+                            'clients': active_project_clients,
+                            'round': project.current_round - 1,  # The round we just completed
+                        }
+                        
+                        # Save a model for the current round
+                        ModelManager.save_model(project, model_data, is_final=False)
+                        logger.info(f"Saved model for round {project.current_round - 1}")
+                    except Exception as e:
+                        logger.error(f"Error saving model for round: {str(e)}")
+                    
                     # Clear client weights for next round
                     self.client_weights[project_id] = {}
-                else:
-                    # If this is the final round, mark project as completed
-                    if project.current_round >= project.rounds:
-                        # Create final model
-                        self._save_final_model(project_id)
-                        
-                        # Mark project as completed
-                        project.status = 'completed'
-                        db.session.commit()
-                        logger.info(f"Project {project_id} completed")
+                    logger.info(f"Advanced to round {project.current_round}/{project.rounds}")
+                    
+                # If this is the final round, mark project as completed and save final model
+                if project.current_round >= project.rounds:
+                    # Create final model
+                    logger.info(f"Final round reached for project {project_id}. Saving final model.")
+                    self._save_final_model(project_id)
+                    
+                    # Mark project as completed
+                    project.status = 'completed'
+                    db.session.commit()
+                    logger.info(f"Project {project_id} completed")
             
             return True
             
         except Exception as e:
             logger.error(f"Error updating model: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     def _aggregate_weights(self, project_id):
@@ -650,6 +739,13 @@ class FederatedLearningServer:
     def _save_final_model(self, project_id):
         """Save the final model after training completion."""
         try:
+            # Import tensorflow here to avoid dependency issues
+            try:
+                import tensorflow as tf
+            except ImportError:
+                logger.error("Could not import TensorFlow. Make sure it's installed.")
+                return False
+                
             project = Project.query.get(project_id)
             if not project:
                 logger.error(f"Project {project_id} not found")
@@ -694,9 +790,7 @@ class FederatedLearningServer:
                     # Get active clients count from ProjectClient table
                     active_clients = ProjectClient.query.filter_by(project_id=project_id).count()
                     
-                    # Save the model in the database using ModelManager
-                    from web.services.model_manager import ModelManager
-                    
+                    # Create model data dictionary
                     model_data = {
                         'accuracy': metrics.get('accuracy', 0),
                         'loss': metrics.get('loss', 0),
@@ -704,118 +798,114 @@ class FederatedLearningServer:
                         'model_file': model_path
                     }
                     
+                    # Import here to avoid circular imports
+                    from web.services.model_manager import ModelManager
+                    
+                    # Save the model in the database using ModelManager
                     saved_model = ModelManager.save_model(project, model_data, is_final=True)
                     logger.info(f"Saved model to database with ID {saved_model.id}")
                     
-                    # Create intermediate models for visualization
-                    if project.current_round > 1:
-                        # Save intermediate models (one per round)
-                        for round_num in range(1, project.current_round):
-                            # Skip if a model for this round already exists
-                            existing_model = Model.query.filter_by(
-                                project_id=project_id, 
-                                metrics={'round': round_num}
-                            ).first()
-                            
-                            if not existing_model:
-                                intermediate_model_data = {
-                                    'accuracy': metrics.get('accuracy', 0) * (round_num / project.current_round),
-                                    'loss': metrics.get('loss', 0) * (1 + (project.current_round - round_num) / project.current_round),
-                                    'clients': active_clients,
-                                    'round': round_num
-                                }
-                                ModelManager.save_model(project, intermediate_model_data, is_final=False)
-                                logger.info(f"Saved intermediate model for round {round_num}")
-                    
                     return True
                 except Exception as e:
-                    logger.error(f"Error creating and saving TensorFlow model: {str(e)}")
+                    logger.error(f"Error saving TensorFlow model: {str(e)}")
                     return False
-            
-            logger.error(f"Unsupported framework for model saving: {project.framework}")
-            return False
-            
+            else:
+                logger.error(f"Unsupported framework: {project.framework}")
+                return False
+                
         except Exception as e:
             logger.error(f"Error saving final model: {str(e)}")
             return False
     
     def _create_mnist_model(self):
         """Create a model for MNIST dataset."""
-        import tensorflow as tf
-        
-        input_shape = (28, 28, 1)
-        model = tf.keras.Sequential([
-            # First Conv Block
-            tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Conv2D(32, (3, 3), padding='same'),
-            tf.keras.layers.MaxPooling2D((2, 2)),
+        try:
+            import tensorflow as tf
             
-            # Second Conv Block
-            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+            input_shape = (28, 28, 1)
+            model = tf.keras.Sequential([
+                # First Conv Block
+                tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Conv2D(32, (3, 3), padding='same'),
+                tf.keras.layers.MaxPooling2D((2, 2)),
+                
+                # Second Conv Block
+                tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+                
+                # Flatten layer
+                tf.keras.layers.Flatten(),
+                
+                # Dense layers
+                tf.keras.layers.Dense(512),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.Dense(10, activation='softmax')
+            ])
             
-            # Flatten layer
-            tf.keras.layers.Flatten(),
+            model.compile(
+                optimizer='adam',
+                loss='categorical_crossentropy',
+                metrics=['accuracy']
+            )
             
-            # Dense layers
-            tf.keras.layers.Dense(512),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Dense(10, activation='softmax')
-        ])
-        
-        model.compile(
-            optimizer='adam',
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        
-        return model
+            return model
+        except ImportError:
+            logger.error("TensorFlow not installed, could not create MNIST model")
+            raise
     
     def _create_cifar10_model(self):
         """Create a model for CIFAR-10 dataset."""
-        import tensorflow as tf
-        
-        input_shape = (32, 32, 3)
-        model = tf.keras.Sequential([
-            # Conv layers
-            tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
-            tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
-            tf.keras.layers.MaxPooling2D((2, 2)),
+        try:
+            import tensorflow as tf
             
-            # Flatten layer
-            tf.keras.layers.Flatten(),
+            input_shape = (32, 32, 3)
+            model = tf.keras.Sequential([
+                # Conv layers
+                tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=input_shape),
+                tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+                tf.keras.layers.MaxPooling2D((2, 2)),
+                
+                # Flatten layer
+                tf.keras.layers.Flatten(),
+                
+                # Dense layers
+                tf.keras.layers.Dense(128, activation='relu'),
+                tf.keras.layers.Dense(10, activation='softmax')
+            ])
             
-            # Dense layers
-            tf.keras.layers.Dense(128, activation='relu'),
-            tf.keras.layers.Dense(10, activation='softmax')
-        ])
-        
-        model.compile(
-            optimizer='adam',
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        
-        return model
+            model.compile(
+                optimizer='adam',
+                loss='categorical_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            return model
+        except ImportError:
+            logger.error("TensorFlow not installed, could not create CIFAR-10 model")
+            raise
     
     def _create_generic_model(self):
         """Create a generic model for any dataset."""
-        import tensorflow as tf
-        
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(128, activation='relu', input_shape=(784,)),
-            tf.keras.layers.Dense(10, activation='softmax')
-        ])
-        
-        model.compile(
-            optimizer='adam',
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        
-        return model
+        try:
+            import tensorflow as tf
+            
+            model = tf.keras.Sequential([
+                tf.keras.layers.Dense(128, activation='relu', input_shape=(784,)),
+                tf.keras.layers.Dense(10, activation='softmax')
+            ])
+            
+            model.compile(
+                optimizer='adam',
+                loss='categorical_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            return model
+        except ImportError:
+            logger.error("TensorFlow not installed, could not create generic model")
+            raise
 
     def get_active_clients_count(self, project_id):
         """Get the number of active clients for a project."""

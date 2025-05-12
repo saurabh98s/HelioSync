@@ -120,7 +120,9 @@
                                                                         {% elif model.is_final %}
                                                                             <span class="badge bg-primary">Final</span>
                                                                         {% else %}
-                                                                            <span class="badge bg-secondary">Training</span>
+                                                                            <span class="badge bg-{{ 'success' if model.status == 'Completed' else 'secondary' }}">
+                                                                                {{ model.status if model.status else 'Training' }}
+                                                                            </span>
                                                                         {% endif %}
                                                                     </td>
                                                                 </tr>

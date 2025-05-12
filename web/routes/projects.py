@@ -7,6 +7,7 @@ This module handles routes for managing federated learning projects.
 from datetime import datetime
 from flask import Blueprint, render_template, redirect, url_for, flash, request, abort, send_file, jsonify, current_app
 from flask_login import login_required, current_user
+import os
 
 from web.app import db
 from web.models import Project, Organization, Client, Model, ProjectClient
@@ -278,6 +279,36 @@ def models(project_id):
         flash('You do not have permission to view this project.', 'error')
         return redirect(url_for('projects.index'))
     
+    # Get all models for this project
+    all_models = Model.query.filter_by(project_id=project.id).order_by(Model.version.desc()).all()
+    
+    # Get the final (global) model if it exists
+    global_model = Model.query.filter_by(project_id=project.id, is_final=True).first()
+    
+    # Get client models based on project_clients
+    client_models = []
+    for pc in project.project_clients:
+        # Get client model info from projects_client metrics
+        if pc.metrics:
+            client_model = {
+                'client': pc.client,
+                'status': pc.status,
+                'accuracy': pc.metrics.get('accuracy', 0),
+                'loss': pc.metrics.get('loss', 0),
+                'updated_at': pc.last_update or datetime.utcnow()
+            }
+            client_models.append(client_model)
+    
+    # Don't create sample models - only show real ones
+    if not all_models:
+        # No models available yet
+        global_model = None
+    
+    # Attach models as properties to project for template access
+    project.all_models = all_models
+    project.global_model = global_model
+    project.client_models = client_models
+    
     return render_template('dashboard/project_models.html', project=project)
 
 @projects_bp.route('/<int:project_id>/models/<int:model_id>')
@@ -353,22 +384,41 @@ def download_model(project_id, model_id):
         flash('You do not have access to this project.', 'danger')
         return redirect(url_for('projects.index'))
     
-    # Check if model is deployed for download
-    if not model.is_deployed or model.deployment_info.get('type') != 'download':
-        flash('Model is not available for download.', 'warning')
+    # Check if model has a path
+    if not model.path or not os.path.exists(model.path):
+        flash('Model file not found.', 'warning')
         return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
     
-    # Get the file path from deployment info
-    file_path = model.deployment_info.get('download_path')
+    # If model is not deployed, deploy it for download
+    if not model.is_deployed:
+        result = ModelManager.deploy_model(model, deploy_type='download')
+        if not result.get('success', False):
+            flash(f'Failed to prepare model for download: {result.get("error", "Unknown error")}', 'danger')
+            return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
     
-    if not file_path:
-        flash('Download path not found.', 'danger')
+    # If already deployed but not for download, redeploy
+    if model.is_deployed and model.deployment_info.get('type') != 'download':
+        result = ModelManager.deploy_model(model, deploy_type='download')
+        if not result.get('success', False):
+            flash(f'Failed to prepare model for download: {result.get("error", "Unknown error")}', 'danger')
+            return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
+    
+    # Get the download path from deployment info
+    download_path = model.deployment_info.get('download_path')
+    if not download_path or not os.path.exists(download_path):
+        flash('Download file not found.', 'danger')
         return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
     
-    # TODO: Implement the actual file download
-    # For now, just redirect back
-    flash('Model download not implemented yet.', 'info')
-    return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
+    # Get the filename from the path
+    filename = os.path.basename(download_path)
+    
+    # Serve the file
+    try:
+        return send_file(download_path, as_attachment=True, download_name=filename)
+    except Exception as e:
+        current_app.logger.error(f"Error sending model file: {str(e)}")
+        flash('Error downloading model file.', 'danger')
+        return redirect(url_for('projects.view_model', project_id=project.id, model_id=model.id))
 
 @projects_bp.route('/<int:project_id>/delete', methods=['POST'])
 @login_required

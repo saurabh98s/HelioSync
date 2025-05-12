@@ -27,7 +27,7 @@
                             <span class="badge bg-secondary">Training</span>
                         {% endif %}
                     </h1>
-                    <p class="text-muted">{{ project.name }} - Round {{ model.round_number }}</p>
+                    <p class="text-muted">{{ project.name }} - Round {% if model.round_number is defined %}{{ model.round_number }}{% else %}{{ model.metrics.get('round', 0) if model.metrics else 0 }}{% endif %}</p>
                 </div>
                 <div>
                     {% if model.is_final and not model.is_deployed %}
@@ -58,8 +58,8 @@
                                     <p><strong>Created:</strong> {{ model.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
                                 </div>
                                 <div class="col-md-6">
-                                    <p><strong>Size:</strong> {{ (model.size / 1024 / 1024)|round(2) }} MB</p>
-                                    <p><strong>Contributors:</strong> {{ model.client_count }} clients</p>
+                                    <p><strong>Size:</strong> {% if model.size is defined %}{{ (model.size / 1024 / 1024)|round(2) }} MB{% else %}Unknown{% endif %}</p>
+                                    <p><strong>Contributors:</strong> {% if model.clients_count is defined %}{{ model.clients_count }}{% else %}{{ model.metrics.get('clients', 0) if model.metrics else 0 }}{% endif %} clients</p>
                                     {% if model.is_deployed %}
                                         <p><strong>Deployed:</strong> {{ model.deployed_at.strftime('%Y-%m-%d %H:%M') }}</p>
                                     {% endif %}
@@ -100,7 +100,11 @@
                                                         Accuracy
                                                     </div>
                                                     <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                        {{ "%.2f%%"|format(model.accuracy * 100) if model.accuracy else 'N/A' }}
+                                                        {% if model.accuracy is defined %}
+                                                            {{ "%.2f%%"|format(model.accuracy * 100) if model.accuracy else 'N/A' }}
+                                                        {% else %}
+                                                            {{ "%.2f%%"|format(model.metrics.get('accuracy', 0) * 100) if model.metrics else 'N/A' }}
+                                                        {% endif %}
                                                     </div>
                                                 </div>
                                                 <div class="col-auto">
@@ -120,7 +124,11 @@
                                                         Loss
                                                     </div>
                                                     <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                        {{ "%.4f"|format(model.loss) if model.loss else 'N/A' }}
+                                                        {% if model.loss is defined %}
+                                                            {{ "%.4f"|format(model.loss) if model.loss else 'N/A' }}
+                                                        {% else %}
+                                                            {{ "%.4f"|format(model.metrics.get('loss', 0)) if model.metrics else 'N/A' }}
+                                                        {% endif %}
                                                     </div>
                                                 </div>
                                                 <div class="col-auto">
@@ -140,7 +148,11 @@
                                                         Training Round
                                                     </div>
                                                     <div class="h5 mb-0 font-weight-bold text-gray-800">
-                                                        {{ model.round_number }} / {{ project.rounds }}
+                                                        {% if model.round_number is defined %}
+                                                            {{ model.round_number }} / {{ project.rounds }}
+                                                        {% else %}
+                                                            {{ model.metrics.get('round', 0) if model.metrics else 0 }} / {{ project.rounds }}
+                                                        {% endif %}
                                                     </div>
                                                 </div>
                                                 <div class="col-auto">
@@ -370,19 +382,19 @@ print(results)
                 <p>How would you like to deploy this model?</p>
                 
                 <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST">
-                    {{ deploy_form.csrf_token }}
+                    {{ deployment_form.csrf_token }}
                     
                     <div class="mb-3">
-                        {{ deploy_form.deployment_type.label(class="form-label") }}
-                        {% if deploy_form.deployment_type.errors %}
-                            {{ deploy_form.deployment_type(class="form-select is-invalid") }}
+                        {{ deployment_form.deploy_type.label(class="form-label") }}
+                        {% if deployment_form.deploy_type.errors %}
+                            {{ deployment_form.deploy_type(class="form-select is-invalid") }}
                             <div class="invalid-feedback">
-                                {% for error in deploy_form.deployment_type.errors %}
+                                {% for error in deployment_form.deploy_type.errors %}
                                     {{ error }}
                                 {% endfor %}
                             </div>
                         {% else %}
-                            {{ deploy_form.deployment_type(class="form-select") }}
+                            {{ deployment_form.deploy_type(class="form-select") }}
                         {% endif %}
                     </div>
                     
@@ -396,7 +408,7 @@ print(results)
                     
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        {{ deploy_form.submit(class="btn btn-success") }}
+                        {{ deployment_form.submit(class="btn btn-success") }}
                     </div>
                 </form>
             </div>
