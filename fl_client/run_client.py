@@ -31,15 +31,29 @@ def load_mnist_data():
     return (x_train, y_train), (x_test, y_test)
 
 def create_mnist_model():
-    """Create a simple CNN model for MNIST."""
+    """Create a simple CNN model for MNIST that matches the server model architecture."""
     model = tf.keras.Sequential([
-        tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
-        tf.keras.layers.MaxPooling2D((2, 2)),
-        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
-        tf.keras.layers.MaxPooling2D((2, 2)),
-        tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+        # First Conv Block
+        tf.keras.layers.Conv2D(32, (3, 3), padding='same', input_shape=(28, 28, 1)),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.ReLU(),
+        tf.keras.layers.Conv2D(32, (3, 3), padding='same'),
+        tf.keras.layers.MaxPooling2D((2, 2)),  # First MaxPooling: 28x28 -> 14x14
+        
+        # Second Conv Block
+        tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.ReLU(),
+        tf.keras.layers.Conv2D(64, (3, 3), padding='same'),
+        # NO second MaxPooling to match server model architecture!
+        
+        # Flatten layer - 14*14*64 = 12544 neurons
         tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(64, activation='relu'),
+        
+        # Dense layers
+        tf.keras.layers.Dense(512),
+        tf.keras.layers.BatchNormalization(),
+        tf.keras.layers.ReLU(),
         tf.keras.layers.Dense(10, activation='softmax')
     ])
     
@@ -60,11 +74,11 @@ def main():
                         help='API key for authentication')
     parser.add_argument('--server_url', type=str, default='http://localhost:5000',
                         help='URL of the federated learning server')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size for training')
-    parser.add_argument('--epochs', type=int, default=5,
+    parser.add_argument('--epochs', type=int, default=1,
                         help='Number of epochs for local training')
-    parser.add_argument('--data_split', type=float, default=0.5,
+    parser.add_argument('--data_split', type=float, default=0.1,
                         help='Fraction of data to use for training')
     
     args = parser.parse_args()
@@ -75,8 +89,20 @@ def main():
     
     # Split data for this client
     split_idx = int(len(x_train) * args.data_split)
-    x_train = x_train[:split_idx]
-    y_train = y_train[:split_idx]
+    
+    # Use a random subset of data to ensure variety between clients
+    indices = np.random.permutation(len(x_train))[:split_idx]
+    x_train = x_train[indices]
+    y_train = y_train[indices]
+    
+    # Use smaller test set
+    test_indices = np.random.permutation(len(x_test))[:1000]  # Use only 1000 test samples
+    x_test = x_test[test_indices]
+    y_test = y_test[test_indices]
+    
+    # Print dataset size information
+    print(f"Training on {len(x_train)} samples (reduced dataset size)")
+    print(f"Test set has {len(x_test)} samples")
     
     # Create model
     print("Creating model...")

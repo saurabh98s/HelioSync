@@ -1,1 +1,11 @@
 federated_learning 
+instance/uploads/models/
+models/
+fl_client/__pycache__/
+web/__pycache__/
+fl_client/__pycache__/
+web/__pycache__/
+web/__pycache__/
+bash.exe.stackdump
+examples/__pycache__/__init__.cpython-311.pyc
+web/__pycache__/
