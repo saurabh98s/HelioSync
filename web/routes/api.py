@@ -18,7 +18,7 @@ from flask import Blueprint, request, jsonify, current_app, send_file
 from flask_login import current_user
 
 from web.app import db
-from web.models import ApiKey, Organization, Client, Project, ProjectClient
+from web.models import ApiKey, Organization, Client, Project, ProjectClient, Model
 
 # Create blueprint
 api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -338,7 +338,11 @@ def get_client_tasks(client_id):
                     "round": fl_server.current_round,
                     "total_rounds": project.rounds,
                     "framework": project.framework,
-                    "dataset": project.dataset_name
+                    "dataset": project.dataset_name,
+                    "aggregation": {
+                        "method": "perfedavg", # Default method
+                        "alpha": 0.5  # Default alpha value
+                    }
                 }
             }
             
@@ -377,11 +381,48 @@ def get_client_tasks(client_id):
 @api_bp.route('/clients/<client_id>/model_update', methods=['POST'])
 @require_api_key
 def model_update(client_id):
-    """Update the model with client's weights."""
+    """Update the model with client's weights.
+    
+    Clients can send model updates with optional aggregation preferences:
+    
+    Request JSON format:
+    {
+        "weights": [...],  # Array of model weight arrays
+        "metrics": {       # Training metrics
+            "accuracy": 0.95,
+            "loss": 0.05,
+            "val_accuracy": 0.92,
+            "val_loss": 0.08,
+            "round": 1,
+            "is_final": false
+        },
+        "aggregation": {   # Optional aggregation preferences
+            "method": "perfedavg",  # "perfedavg" or "fedavg"
+            "alpha": 0.5    # Balance between data size (1.0) and accuracy (0.0)
+        }
+    }
+    
+    The "aggregation" field is optional. If provided:
+    - "method" can be "perfedavg" (performance-weighted) or "fedavg" (standard)
+    - "alpha" controls the balance in PerfFedAvg:
+      - alpha=1.0: Pure data size weighting (equivalent to FedAvg)
+      - alpha=0.0: Pure accuracy weighting (only performance matters)
+      - alpha=0.5: Balanced weighting (default)
+    """
     try:
         data = request.get_json()
         weights = data.get('weights', [])
         metrics = data.get('metrics', {})
+        
+        # Process aggregation preferences
+        aggregation_prefs = data.get('aggregation', {})
+        if aggregation_prefs:
+            # Add the aggregation preferences to metrics for the FL server
+            if 'alpha' in aggregation_prefs:
+                metrics['alpha'] = float(aggregation_prefs['alpha'])
+            if 'method' in aggregation_prefs:
+                # Convert method name to boolean flag for PerfFedAvg
+                metrics['use_perfedavg'] = aggregation_prefs['method'].lower() == 'perfedavg'
         
         # Validate that weights were provided
         if not weights:
@@ -622,6 +663,90 @@ def model_update(client_id):
             "success": False,
             "message": f"Server error: {str(e)}",
             "should_retry": True
+        }), 500
+
+@api_bp.route('/projects/<int:project_id>/aggregation', methods=['POST'])
+@require_api_key
+def update_project_aggregation(project_id):
+    """Update aggregation settings for a project.
+    
+    Request JSON format:
+    {
+        "method": "perfedavg",  # "perfedavg" or "fedavg"
+        "alpha": 0.5,           # Balance between data size and performance
+        "save_settings": true   # Whether to save these settings for the project
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Get the project
+        project = Project.query.get_or_404(project_id)
+        
+        # Check if the organization has access to this project
+        if request.organization not in project.organizations:
+            return jsonify({"error": "Access denied"}), 403
+        
+        # Get current settings or create default
+        settings = project.settings if hasattr(project, 'settings') and project.settings else {}
+        
+        # Extract aggregation settings
+        method = data.get('method', 'perfedavg')
+        alpha = float(data.get('alpha', 0.5))
+        
+        # Validate inputs
+        if method not in ['perfedavg', 'fedavg']:
+            return jsonify({"error": "Invalid aggregation method. Use 'perfedavg' or 'fedavg'."}), 400
+        
+        if not 0 <= alpha <= 1:
+            return jsonify({"error": "Alpha must be between 0 and 1"}), 400
+        
+        # Update aggregation settings
+        if 'aggregation' not in settings:
+            settings['aggregation'] = {}
+            
+        settings['aggregation']['method'] = method
+        settings['aggregation']['alpha'] = alpha
+        
+        # Save settings to project if requested
+        if data.get('save_settings', False):
+            project.settings = settings
+            db.session.commit()
+            current_app.logger.info(f"Updated aggregation settings for project {project_id}: {settings['aggregation']}")
+        
+        # Pass settings to FL server 
+        fl_server = current_app.fl_server
+        if fl_server:
+            try:
+                # If project is initialized in FL server, update its settings
+                if project_id in fl_server.projects:
+                    if 'settings' not in fl_server.projects[project_id]:
+                        fl_server.projects[project_id]['settings'] = {}
+                    fl_server.projects[project_id]['settings']['aggregation'] = {
+                        'method': method,
+                        'alpha': alpha,
+                        'use_perfedavg': method == 'perfedavg'
+                    }
+                    current_app.logger.info(f"Updated FL server aggregation settings for project {project_id}")
+            except Exception as e:
+                current_app.logger.error(f"Error updating FL server settings: {str(e)}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Aggregation settings updated for project {project_id}",
+            "settings": {
+                "method": method,
+                "alpha": alpha
+            }
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating aggregation settings: {str(e)}")
+        return jsonify({
+            "error": f"Server error: {str(e)}"
         }), 500
 
 @api_bp.route('/clients/<client_id>/heartbeat', methods=['POST'])
@@ -962,4 +1087,99 @@ def disconnect_client():
         return jsonify({
             'error': 'Internal server error',
             'status': 'error'
-        }), 500 
+        }), 500
+
+@api_bp.route('/models/<model_id>/comparison', methods=['GET'])
+def get_model_comparison(model_id):
+    """
+    Get model comparison data for display in the UI.
+    
+    This endpoint returns comparison metrics for the specified model,
+    including evaluation metrics from testing on standard datasets.
+    """
+    try:
+        # Check for API key or user login
+        has_api_key = False
+        api_key = request.headers.get('X-API-Key') or request.args.get('api_key')
+        
+        if api_key:
+            key_obj = ApiKey.query.filter_by(key=api_key).first()
+            has_api_key = bool(key_obj and key_obj.is_valid())
+        
+        # Only proceed if API key is valid or user is logged in
+        if not has_api_key and not current_user.is_authenticated:
+            return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
+        
+        # Get the model details
+        model = Model.query.get(model_id)
+        if not model:
+            return jsonify({'status': 'error', 'message': 'Model not found'}), 404
+            
+        # Get the project for this model
+        project = Project.query.get(model.project_id)
+        if not project:
+            return jsonify({'status': 'error', 'message': 'Project not found'}), 404
+            
+        # Get aggregated metrics from FL manager
+        fl_manager = current_app.config.get('FL_MANAGER')
+        if not fl_manager:
+            return jsonify({'status': 'error', 'message': 'FL manager not available'}), 500
+            
+        metrics = fl_manager.aggregated_metrics.get(str(project.id), {})
+        
+        # If no metrics available, return placeholder data
+        if not metrics:
+            current_app.logger.warning(f"No comparison metrics available for model {model_id}")
+            return jsonify({
+                'status': 'success',
+                'message': 'No comparison metrics available',
+                'comparison': {
+                    'accuracy': {
+                        'current': model.accuracy or 0.0,
+                        'baseline': None,
+                        'improvement': None
+                    },
+                    'loss': {
+                        'current': model.loss or 0.0,
+                        'baseline': None,
+                        'improvement': None
+                    },
+                    'precision': None,
+                    'recall': None,
+                    'f1': None,
+                    'aggregation_method': 'FedAvg'
+                }
+            })
+        
+        # Construct comparison data
+        comparison = {
+            'accuracy': {
+                'current': float(metrics.get('accuracy', model.accuracy or 0.0)),
+                'baseline': 0.85,  # Typical baseline for MNIST/CIFAR
+                'improvement': float(metrics.get('accuracy', model.accuracy or 0.0)) - 0.85
+            },
+            'loss': {
+                'current': float(metrics.get('loss', model.loss or 0.0)),
+                'baseline': 0.5,  # Typical baseline for MNIST/CIFAR
+                'improvement': 0.5 - float(metrics.get('loss', model.loss or 0.0))
+            },
+            'aggregation_method': metrics.get('aggregation_method', 'FedAvg')
+        }
+        
+        # Add additional metrics if available
+        if 'precision' in metrics:
+            comparison['precision'] = float(metrics['precision'])
+        if 'recall' in metrics:
+            comparison['recall'] = float(metrics['recall'])
+        if 'f1' in metrics:
+            comparison['f1'] = float(metrics['f1'])
+            
+        # Return comparison data
+        return jsonify({
+            'status': 'success',
+            'comparison': comparison
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting model comparison: {str(e)}")
+        return jsonify({'status': 'error', 'message': f'Error getting model comparison: {str(e)}'}), 500 

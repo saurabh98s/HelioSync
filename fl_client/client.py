@@ -291,17 +291,23 @@ class FederatedClient:
                         self.current_project_id = project_id
                         self.current_round = current_round
                         
-                        # Check if project is completed
-                        if details.get('project_status') == 'completed':
-                            print(f"Project is already completed: {data['message']}")
+                        # Check if project is completed - look for multiple completion indicators
+                        if (data.get('status') == 'completed' or 
+                            details.get('project_status') == 'completed' or
+                            details.get('should_stop') or 
+                            details.get('training_complete') or
+                            details.get('next_action') == 'stop_training'):
+                            
+                            print(f"Project completion detected: {data.get('message', 'Project completed')}")
                             
                             # If we haven't sent our final update yet, continue once more to ensure it's sent
-                            if not self.final_update_sent and current_round >= total_rounds - 1:
+                            if not self.final_update_sent and current_round >= 0:
                                 print("Haven't sent final update yet. Proceeding with training one more time.")
                             else:
-                                # We've already sent our final update or aren't in the final round, so we can stop
-                                time.sleep(1)  # Shorter wait time (changed from 10)
-                                continue  # Skip to next iteration instead of breaking
+                                # We've already sent our final update, so we can stop
+                                print("Final update already sent or project marked complete. Stopping client.")
+                                self.is_training = False
+                                break  # Exit the training loop completely
                         
                         # If the response indicated weights are available but didn't include them (short_timeout mode)
                         # make a second request to get the weights
@@ -332,7 +338,42 @@ class FederatedClient:
                         # Get model weights and update local model
                         if weights:
                             # Check if we need to recreate the model to match server weights
-                            server_weights = [np.array(w) for w in weights]
+                            server_weights = []
+                            for w in weights:
+                                try:
+                                    # Convert each weight array properly and ensure it's valid
+                                    if isinstance(w, list):
+                                        # Skip empty arrays
+                                        if not w:
+                                            print(f"Skipping empty weight array")
+                                            continue
+                                            
+                                        # Convert list to numpy array
+                                        w_array = np.array(w, dtype=np.float32)
+                                        
+                                        # Check for valid array
+                                        if w_array.size == 0 or np.any(np.isnan(w_array)) or np.any(np.isinf(w_array)):
+                                            print(f"Invalid weight array detected: empty or contains NaN/Inf")
+                                            continue
+                                            
+                                        server_weights.append(w_array)
+                                    elif isinstance(w, dict):
+                                        print(f"Unexpected weight format (dict): {w.keys()}")
+                                        continue
+                                    else:
+                                        print(f"Unexpected weight type: {type(w)}")
+                                        continue
+                                except Exception as w_err:
+                                    print(f"Error processing weight: {w_err}")
+                                    continue
+                                    
+                            # Only proceed if we have valid weights
+                            if len(server_weights) == 0:
+                                print("No valid weights received, skipping training round")
+                                time.sleep(1)
+                                continue
+                                
+                            # Check if weights count matches model
                             model_weights_count = len(self.model.get_weights())
                             server_weights_count = len(server_weights)
                             
@@ -462,28 +503,30 @@ class FederatedClient:
                                 # Check if the response is successful
                                 if response and response.status_code == 200:
                                     response_data = response.json()
-                                    if response_data.get('status') == 'success':
-                                        # If this was the final update, mark it as sent
-                                        if is_final_round:
-                                            self.final_update_sent = True
-                                            print("Final update successfully sent and processed by server!")
-                                            
-                                        # Check if project is completed either directly or from the response
-                                        project_completed = False
-                                        if 'details' in response_data and 'project_status' in response_data['details']:
-                                            project_status = response_data['details']['project_status']
-                                            project_completed = project_status == 'completed'
-                                            if project_completed:
-                                                print(f"Project is now marked as completed on the server.")
-                                                
-                                        # For single-round projects or if explicitly completed, stop training
-                                        if project_completed or is_final_round or self.final_update_sent:
-                                            print("Training cycle complete. Exiting training loop.")
-                                            break
-                                            
-                                        print("Training completed and update sent to server")
-                                    else:
-                                        print(f"Server response: {response_data.get('message', 'Unknown response')}")
+                                    print(f"Server response: {response_data.get('message', 'Unknown response')}")
+                                    
+                                    # Check multiple indicators of completion
+                                    project_completed = (
+                                        response_data.get('status') == 'completed' or
+                                        response_data.get('project_completed') or
+                                        response_data.get('training_complete') or
+                                        response_data.get('should_stop') or
+                                        response_data.get('next_action') == 'stop_training' or
+                                        (response_data.get('project_status') == 'completed')
+                                    )
+                                    
+                                    # If this was the final update, mark it as sent
+                                    if is_final_round:
+                                        self.final_update_sent = True
+                                        print("Final update successfully sent and processed by server!")
+                                        
+                                    # For any completion signal, stop training
+                                    if project_completed or is_final_round or self.final_update_sent:
+                                        print("Training cycle complete. Exiting training loop.")
+                                        self.is_training = False
+                                        break
+                                        
+                                    print("Update sent to server successfully.")
                                 else:
                                     print(f"Failed to send update after multiple retries.")
                                     

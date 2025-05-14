@@ -238,26 +238,97 @@
                 <!-- Model Visualization Card -->
                 <div class="col-lg-4">
                     <div class="card shadow mb-4">
-                        <div class="card-header py-3">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
                             <h6 class="m-0 font-weight-bold text-primary">Model Comparison</h6>
+                            <a href="{{ url_for('projects.model_view', project_id=project.id, model_id=model.id) }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="fas fa-sync-alt me-1"></i> Refresh
+                            </a>
                         </div>
                         <div class="card-body">
-                            {% if project.models|length > 1 %}
-                                <div class="mb-4">
-                                    <h6>Accuracy Comparison</h6>
-                                    <canvas id="accuracyComparisonChart" width="100%" height="200"></canvas>
+                            <div id="model-comparison-container">
+                                <!-- Aggregation Method -->
+                                <div class="alert alert-info mb-4">
+                                    <i class="fas fa-code-branch me-2"></i>
+                                    <strong>Aggregation Method:</strong> {{ comparison_data.aggregation_method }}
                                 </div>
                                 
+                                <!-- Accuracy -->
                                 <div class="mb-4">
-                                    <h6>Loss Comparison</h6>
-                                    <canvas id="lossComparisonChart" width="100%" height="200"></canvas>
+                                    <h6>Accuracy</h6>
+                                    <div class="progress mb-2" style="height: 25px;">
+                                        <div class="progress-bar bg-primary" role="progressbar" 
+                                             style="width: {{ (comparison_data.accuracy.current * 100)|round }}%;" 
+                                             aria-valuenow="{{ (comparison_data.accuracy.current * 100)|round }}" 
+                                             aria-valuemin="0" aria-valuemax="100">
+                                            {{ (comparison_data.accuracy.current * 100)|round(2) }}%
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <small>Current Model</small>
+                                        <small>Baseline: {{ (comparison_data.accuracy.baseline * 100)|round(2) }}%</small>
+                                    </div>
+                                    {% if comparison_data.accuracy.improvement > 0 %}
+                                    <div class="mt-2 text-success">
+                                        <i class="fas fa-arrow-up me-1"></i>
+                                        {{ (comparison_data.accuracy.improvement * 100)|abs|round(2) }}% improvement from baseline
+                                    </div>
+                                    {% else %}
+                                    <div class="mt-2 text-danger">
+                                        <i class="fas fa-arrow-down me-1"></i>
+                                        {{ (comparison_data.accuracy.improvement * 100)|abs|round(2) }}% decrease from baseline
+                                    </div>
+                                    {% endif %}
                                 </div>
-                            {% else %}
-                                <div class="text-center py-5">
-                                    <i class="fas fa-chart-line fa-3x text-gray-300 mb-3"></i>
-                                    <p class="text-gray-500">Comparison charts will be available when more model versions exist.</p>
+                                
+                                <!-- Loss -->
+                                <div class="mb-4">
+                                    <h6>Loss</h6>
+                                    <div class="progress mb-2" style="height: 25px;">
+                                        <div class="progress-bar bg-danger" role="progressbar" 
+                                             style="width: {% if (comparison_data.loss.current * 100)|round > 100 %}100{% else %}{{ (comparison_data.loss.current * 100)|round }}{% endif %}%;" 
+                                             aria-valuenow="{{ comparison_data.loss.current }}" 
+                                             aria-valuemin="0" aria-valuemax="1">
+                                            {{ comparison_data.loss.current|round(4) }}
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <small>Current Model</small>
+                                        <small>Baseline: {{ comparison_data.loss.baseline|round(4) }}</small>
+                                    </div>
+                                    {% if comparison_data.loss.improvement > 0 %}
+                                    <div class="mt-2 text-success">
+                                        <i class="fas fa-arrow-down me-1"></i>
+                                        {{ comparison_data.loss.improvement|abs|round(4) }} improvement from baseline
+                                    </div>
+                                    {% else %}
+                                    <div class="mt-2 text-danger">
+                                        <i class="fas fa-arrow-up me-1"></i>
+                                        {{ comparison_data.loss.improvement|abs|round(4) }} increase from baseline
+                                    </div>
+                                    {% endif %}
                                 </div>
-                            {% endif %}
+                                
+                                <!-- Additional Metrics -->
+                                <div class="mt-4">
+                                    <h6>Additional Metrics</h6>
+                                    <table class="table table-sm">
+                                        <tbody>
+                                            <tr>
+                                                <td>Precision</td>
+                                                <td>{{ (comparison_data.precision * 100)|round(2) }}%</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Recall</td>
+                                                <td>{{ (comparison_data.recall * 100)|round(2) }}%</td>
+                                            </tr>
+                                            <tr>
+                                                <td>F1 Score</td>
+                                                <td>{{ (comparison_data.f1 * 100)|round(2) }}%</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                             
                             <hr>
                             
@@ -464,9 +535,13 @@ print(results)
 {% endblock %}
 
 {% block additional_js %}
-{% if project.models|length > 1 %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // Container for model data
+    document.querySelector('.container-fluid').id = 'model-container';
+    document.querySelector('#model-container').dataset.modelId = "{{ model.id }}";
+
+    {% if project.models|length > 1 %}
     // Sample data - In production, fetch from your backend API
     const modelVersions = [
         {% for model_item in project.models %}
@@ -485,96 +560,8 @@ print(results)
             {{ model_item.loss or 0 }},
         {% endfor %}
     ];
-    
-    // Accuracy Chart
-    const accuracyComparisonData = {
-        labels: modelVersions,
-        datasets: [{
-            label: 'Accuracy',
-            data: accuracyValues,
-            backgroundColor: 'rgba(54, 162, 235, 0.5)',
-            borderColor: 'rgb(54, 162, 235)',
-            borderWidth: 1
-        }]
-    };
-    
-    const accuracyComparisonConfig = {
-        type: 'bar',
-        data: accuracyComparisonData,
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 1,
-                    ticks: {
-                        callback: function(value) {
-                            return (value * 100).toFixed(0) + '%';
-                        }
-                    }
-                }
-            },
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            return `Accuracy: ${(context.parsed.y * 100).toFixed(2)}%`;
-                        }
-                    }
-                }
-            }
-        }
-    };
-    
-    // Loss Chart
-    const lossComparisonData = {
-        labels: modelVersions,
-        datasets: [{
-            label: 'Loss',
-            data: lossValues,
-            backgroundColor: 'rgba(255, 99, 132, 0.5)',
-            borderColor: 'rgb(255, 99, 132)',
-            borderWidth: 1
-        }]
-    };
-    
-    const lossComparisonConfig = {
-        type: 'bar',
-        data: lossComparisonData,
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
-    };
-    
-    // Initialize Charts
-    window.addEventListener('DOMContentLoaded', (event) => {
-        new Chart(document.getElementById('accuracyComparisonChart'), accuracyComparisonConfig);
-        new Chart(document.getElementById('lossComparisonChart'), lossComparisonConfig);
-    });
-    
-    // Clipboard functionality for API URL
-    document.addEventListener('DOMContentLoaded', function() {
-        const clipboardButtons = document.querySelectorAll('.copy-btn');
-        clipboardButtons.forEach(button => {
-            button.addEventListener('click', function() {
-                const textToCopy = this.getAttribute('data-clipboard-text');
-                navigator.clipboard.writeText(textToCopy).then(() => {
-                    const originalContent = this.innerHTML;
-                    this.innerHTML = '<i class="fas fa-check"></i>';
-                    setTimeout(() => {
-                        this.innerHTML = originalContent;
-                    }, 2000);
-                });
-            });
-        });
-    });
+    {% endif %}
 </script>
-{% endif %}
 {% endblock %}
 
 {% block additional_css %}

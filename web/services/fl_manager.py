@@ -740,9 +740,19 @@ class FederatedLearningServer:
             if should_process_update:
                 logger.info(f"Aggregating weights for project {project_id} from {active_project_clients} clients")
                 
-                # Perform federated averaging - only if we have multiple clients
+                # Get aggregation method from project settings or metrics
+                alpha = metrics.get('alpha', 0.5)  # Default to balanced weighting
+                use_perfedavg = metrics.get('use_perfedavg', True)  # Default to using PerfFedAvg
+                
+                # Perform aggregation - use PerfFedAvg as default with custom alpha if specified
                 if active_project_clients > 1:
-                    aggregated_weights = self._aggregate_weights(project_id)
+                    if use_perfedavg:
+                        logger.info(f"Using PerfFedAvg with alpha={alpha} for project {project_id}")
+                        aggregated_weights = self._aggregate_weights_perfedavg(project_id, alpha=alpha)
+                    else:
+                        logger.info(f"Using standard FedAvg for project {project_id}")
+                        aggregated_weights = self._aggregate_weights(project_id)
+                        
                     # Store the aggregated weights
                     self.model_weights[project_id] = aggregated_weights
                 else:
@@ -775,6 +785,24 @@ class FederatedLearningServer:
                     avg_loss /= total_samples
                     avg_val_accuracy /= total_samples
                     avg_val_loss /= total_samples
+                
+                # Validate the aggregated model
+                validation_metrics = self._validate_aggregated_model(project_id)
+                
+                # Use validation metrics if available, otherwise use client-reported averages
+                if validation_metrics:
+                    logger.info(f"Using server-side validation metrics for project {project_id}")
+                    # Prefer server-side validation if available 
+                    if validation_metrics.get('accuracy') is not None:
+                        avg_accuracy = validation_metrics.get('accuracy', avg_accuracy) 
+                    if validation_metrics.get('loss') is not None:
+                        avg_loss = validation_metrics.get('loss', avg_loss)
+                    if validation_metrics.get('val_accuracy') is not None:
+                        avg_val_accuracy = validation_metrics.get('val_accuracy', avg_val_accuracy)
+                    if validation_metrics.get('val_loss') is not None:
+                        avg_val_loss = validation_metrics.get('val_loss', avg_val_loss)
+                else:
+                    logger.info(f"Using client-reported metrics for project {project_id}")
                 
                 # Update aggregated metrics
                 self.aggregated_metrics[project_id].update({
@@ -1031,6 +1059,233 @@ class FederatedLearningServer:
             return self.model_weights.get(project_id, [])
             
         logger.info(f"Aggregated weights for project {project_id} from {valid_clients} clients (out of {len(client_weights)} total, {validation_issues} had issues)")
+        
+        # Validate final aggregated weights
+        for i, w in enumerate(aggregated_weights):
+            if not np.all(np.isfinite(w)):
+                logger.warning(f"Aggregated weight at index {i} has non-finite values, replacing with zeros")
+                aggregated_weights[i] = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        return aggregated_weights
+    
+    def _aggregate_weights_perfedavg(self, project_id, alpha=0.5):
+        """Aggregate weights using Performance-Weighted FedAvg.
+        
+        Args:
+            project_id: ID of the project to aggregate weights for
+            alpha: Hyperparameter balancing data size (alpha=1) and 
+                   performance weighting (alpha=0). Default 0.5 balances both.
+                   
+        Returns:
+            List of aggregated weight arrays
+        """
+        if project_id not in self.client_weights or not self.client_weights[project_id]:
+            logger.warning(f"No client weights available for project {project_id}")
+            return self.model_weights.get(project_id, [])
+        
+        client_weights = self.client_weights[project_id]
+        
+        # Get the first client's weights to determine the structure
+        first_client = next(iter(client_weights.values()))
+        first_weights = first_client['weights']
+        
+        # Validate client weights - check if they're empty
+        if not first_weights or len(first_weights) == 0:
+            logger.error(f"First client's weights empty or invalid for project {project_id}")
+            return self.model_weights.get(project_id, [])
+        
+        # Debug log weight shapes
+        logger.info(f"First client's weight structure: {[w.shape if hasattr(w, 'shape') else (type(w), len(w) if hasattr(w, '__len__') else 'no length') for w in first_weights]}")
+        
+        # Initialize aggregated weights with zeros of the same shape
+        try:
+            aggregated_weights = []
+            for w in first_weights:
+                if isinstance(w, np.ndarray):
+                    if w.size == 0:  # Check for empty arrays
+                        logger.error(f"Empty numpy array in weights")
+                        return self.model_weights.get(project_id, [])
+                    aggregated_weights.append(np.zeros_like(w))
+                elif isinstance(w, list):
+                    if not w:  # Check for empty lists
+                        logger.error(f"Empty list in weights")
+                        return self.model_weights.get(project_id, [])
+                    w_array = np.array(w, dtype=np.float32)
+                    aggregated_weights.append(np.zeros_like(w_array))
+                else:
+                    logger.error(f"Unexpected weight type: {type(w)}")
+                    return self.model_weights.get(project_id, [])
+            
+            logger.info(f"Initialized aggregated weights with shapes: {[w.shape for w in aggregated_weights]}")
+        except Exception as e:
+            logger.error(f"Error initializing aggregated weights: {str(e)}")
+            return self.model_weights.get(project_id, [])
+        
+        # Calculate total data size
+        total_data_size = sum(client['data_size'] for client in client_weights.values())
+        if total_data_size == 0:
+            logger.warning(f"Total data size is 0 for project {project_id}, using equal weighting for data component")
+            total_data_size = len(client_weights)  # Use client count for equal weighting
+        
+        # Calculate total accuracy (for normalization)
+        # First check which metrics to use - prefer validation accuracy if available
+        acc_key = 'val_accuracy'
+        acc_values = [client['metrics'].get(acc_key, 0) for client in client_weights.values()]
+        
+        # If no validation accuracy, fall back to training accuracy
+        if sum(acc_values) == 0:
+            acc_key = 'accuracy'
+            acc_values = [client['metrics'].get(acc_key, 0) for client in client_weights.values()]
+        
+        # Calculate total accuracy for normalization
+        total_accuracy = sum(acc_values)
+        
+        # If still no accuracy metrics, fall back to standard FedAvg
+        if total_accuracy == 0:
+            logger.warning("No accuracy metrics available, falling back to standard FedAvg")
+            return self._aggregate_weights(project_id)
+        
+        # Track validation issues
+        validation_issues = 0
+        valid_clients = 0
+        
+        # Calculate effective contribution weights with PerfFedAvg
+        contribution_weights = {}
+        valid_client_weights = {}
+        
+        # First pass: calculate contribution weights
+        for client_id, client_data in client_weights.items():
+            try:
+                client_data_size = client_data['data_size']
+                client_metrics = client_data['metrics']
+                
+                # Get accuracy value - prefer validation accuracy if available
+                client_accuracy = client_metrics.get(acc_key, 0)
+                
+                # Skip clients with zero accuracy (likely invalid models)
+                if client_accuracy <= 0:
+                    logger.warning(f"Client {client_id} has zero or negative accuracy ({client_accuracy}), skipping from aggregation")
+                    validation_issues += 1
+                    continue
+                
+                # Calculate data size component (how much data this client has relative to all clients)
+                data_weight = client_data_size / total_data_size if total_data_size > 0 else 1.0/len(client_weights)
+                
+                # Calculate accuracy component (how good this client's model is relative to all clients)
+                accuracy_weight = client_accuracy / total_accuracy if total_accuracy > 0 else 1.0/len(client_weights)
+                
+                # Combined weight using alpha
+                # alpha=1: pure data size weighting (standard FedAvg)
+                # alpha=0: pure accuracy weighting
+                weight_factor = alpha * data_weight + (1 - alpha) * accuracy_weight
+                
+                logger.info(f"Client {client_id} - Data weight: {data_weight:.4f}, "
+                          f"Accuracy weight: {accuracy_weight:.4f}, "
+                          f"Combined weight: {weight_factor:.4f}, "
+                          f"Accuracy: {client_accuracy:.4f}, "
+                          f"Data size: {client_data_size}")
+                
+                # Store the contribution weight
+                contribution_weights[client_id] = weight_factor
+                valid_client_weights[client_id] = client_data
+                valid_clients += 1
+                
+            except Exception as client_error:
+                logger.error(f"Error calculating contribution weight for client {client_id}: {str(client_error)}")
+                validation_issues += 1
+        
+        # Check if we have any valid clients
+        if valid_clients == 0:
+            logger.error(f"No valid clients for PerfFedAvg aggregation in project {project_id}")
+            return self.model_weights.get(project_id, [])
+        
+        # Normalize the weights to sum to 1.0
+        total_weight = sum(contribution_weights.values())
+        if total_weight <= 0:
+            logger.warning(f"Total contribution weight is zero or negative: {total_weight}, using equal weights")
+            equal_weight = 1.0 / len(contribution_weights)
+            contribution_weights = {client_id: equal_weight for client_id in contribution_weights}
+        else:
+            contribution_weights = {client_id: weight/total_weight for client_id, weight in contribution_weights.items()}
+        
+        # Second pass: apply the normalized weights to the model updates
+        for client_id, client_data in valid_client_weights.items():
+            try:
+                client_weights_list = client_data['weights']
+                weight_factor = contribution_weights[client_id]
+                
+                # Skip if client has empty or invalid weights
+                if not client_weights_list or len(client_weights_list) != len(aggregated_weights):
+                    logger.warning(f"Client {client_id} has invalid weights (count mismatch): {len(client_weights_list)} vs expected {len(aggregated_weights)}")
+                    validation_issues += 1
+                    continue
+                
+                # Sum up the weighted contributions
+                valid_layer_count = 0
+                for i, w in enumerate(client_weights_list):
+                    try:
+                        # Skip if index is out of range
+                        if i >= len(aggregated_weights):
+                            logger.warning(f"Client {client_id} weight index {i} exceeds aggregated weights length {len(aggregated_weights)}")
+                            continue
+                        
+                        # Convert to numpy array if it's a list or other sequence
+                        if not isinstance(w, np.ndarray):
+                            try:
+                                # Check if we have empty data
+                                if not w and hasattr(w, '__len__'):
+                                    logger.warning(f"Empty weight data at index {i} from client {client_id}")
+                                    continue
+                                w = np.array(w, dtype=np.float32)
+                            except (ValueError, TypeError) as e:
+                                logger.error(f"Error converting client {client_id} weight to numpy array: {e}")
+                                logger.error(f"Weight type: {type(w)}, content sample: {str(w)[:100] if w else 'None'}")
+                                continue
+                        
+                        # Check for empty arrays
+                        if w.size == 0:
+                            logger.warning(f"Empty numpy array at index {i} from client {client_id}")
+                            continue
+                        
+                        # Ensure shapes match
+                        if w.shape != aggregated_weights[i].shape:
+                            logger.warning(f"Client {client_id} weight shape mismatch at index {i}: {w.shape} vs {aggregated_weights[i].shape}")
+                            # Try to reshape if possible (when dimensions are compatible)
+                            try:
+                                total_elements_client = np.prod(w.shape)
+                                total_elements_agg = np.prod(aggregated_weights[i].shape)
+                                if total_elements_client == total_elements_agg:
+                                    w = w.reshape(aggregated_weights[i].shape)
+                                    logger.info(f"Successfully reshaped weight to {w.shape}")
+                                else:
+                                    logger.error(f"Cannot reshape weight: different number of elements ({total_elements_client} vs {total_elements_agg})")
+                                    continue
+                            except Exception as reshape_error:
+                                logger.error(f"Reshape error: {str(reshape_error)}")
+                                continue
+                        
+                        # Check for NaN or infinity
+                        if not np.all(np.isfinite(w)):
+                            logger.warning(f"Client {client_id} has non-finite values in weights at index {i}")
+                            # Replace NaN/inf with zeros
+                            w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+                        
+                        # Apply the weighted contribution to aggregated weights
+                        aggregated_weights[i] += w * weight_factor
+                        valid_layer_count += 1
+                    except Exception as layer_error:
+                        logger.error(f"Error processing weight at index {i} for client {client_id}: {str(layer_error)}")
+                
+                if valid_layer_count == len(aggregated_weights):
+                    logger.info(f"Successfully processed all weights from client {client_id} with weight {weight_factor:.4f}")
+                else:
+                    logger.warning(f"Client {client_id} only processed {valid_layer_count}/{len(aggregated_weights)} weights")
+                    
+            except Exception as client_error:
+                logger.error(f"Error applying weights from client {client_id}: {str(client_error)}")
+                validation_issues += 1
+        
+        logger.info(f"Aggregated weights for project {project_id} from {valid_clients} clients (out of {len(client_weights)} total, {validation_issues} had issues) using PerfFedAvg with alpha={alpha}")
         
         # Validate final aggregated weights
         for i, w in enumerate(aggregated_weights):
@@ -2034,6 +2289,253 @@ class FederatedLearningServer:
         except Exception as e:
             logger.error(f"Error getting client data size: {str(e)}")
             return 10
+
+    def _validate_aggregated_model(self, project_id):
+        """Validate the aggregated model against a validation dataset."""
+        try:
+            # Get project info
+            project = Project.query.get(project_id)
+            if not project:
+                logger.error(f"Project {project_id} not found during validation")
+                return None
+                
+            # Get the aggregated weights
+            weights = self.model_weights.get(project_id, [])
+            if not weights:
+                logger.error(f"No weights found for project {project_id} during validation")
+                return None
+                
+            # Import appropriate libraries based on framework
+            framework = project.framework.lower() if project.framework else 'tensorflow'
+            dataset_name = project.dataset_name.lower() if project.dataset_name else 'mnist'
+            
+            if framework.startswith('tensorflow') or framework == 'keras':
+                try:
+                    import tensorflow as tf
+                    from tensorflow.keras.datasets import mnist, cifar10, fashion_mnist
+                    
+                    # Create model for validation
+                    model = None
+                    
+                    # Select validation dataset based on project dataset
+                    validation_data = None
+                    
+                    if dataset_name == 'mnist':
+                        # Load MNIST test data
+                        (_, _), (x_test, y_test) = mnist.load_data()
+                        x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+                        y_test_orig = y_test.copy()  # Keep original for confusion matrix
+                        y_test = tf.keras.utils.to_categorical(y_test, 10)
+                        
+                        # Create MNIST model
+                        model = self._create_mnist_model()
+                        validation_data = (x_test, y_test)
+                        
+                    elif dataset_name == 'fashion_mnist':
+                        # Load Fashion MNIST test data
+                        (_, _), (x_test, y_test) = fashion_mnist.load_data()
+                        x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+                        y_test_orig = y_test.copy()  # Keep original for confusion matrix
+                        y_test = tf.keras.utils.to_categorical(y_test, 10)
+                        
+                        # Create Fashion MNIST model
+                        model = self._create_mnist_model()  # Uses same architecture as MNIST
+                        validation_data = (x_test, y_test)
+                        
+                    elif dataset_name == 'cifar10':
+                        # Load CIFAR-10 test data
+                        (_, _), (x_test, y_test) = cifar10.load_data()
+                        x_test = x_test.astype('float32') / 255.0
+                        y_test_orig = y_test.squeeze().copy()  # Keep original for confusion matrix
+                        y_test = tf.keras.utils.to_categorical(y_test, 10)
+                        
+                        # Create CIFAR-10 model
+                        model = self._create_cifar10_model()
+                        validation_data = (x_test, y_test)
+                        
+                    else:
+                        logger.warning(f"No validation dataset available for {dataset_name}")
+                        return None
+                    
+                    # First validate and preprocess the weights
+                    processed_weights = []
+                    for w in weights:
+                        try:
+                            # Skip empty weights
+                            if not hasattr(w, 'shape') or w.size == 0:
+                                logger.warning("Skipping empty weight array in validation")
+                                continue
+                                
+                            # Convert to numpy if needed
+                            if not isinstance(w, np.ndarray):
+                                w_array = np.array(w, dtype=np.float32)
+                            else:
+                                w_array = w
+                                
+                            # Check for NaN/Inf
+                            if np.any(np.isnan(w_array)) or np.any(np.isinf(w_array)):
+                                logger.warning("Weight contains NaN/Inf values, replacing with zeros")
+                                w_array = np.nan_to_num(w_array, nan=0.0, posinf=0.0, neginf=0.0)
+                                
+                            processed_weights.append(w_array)
+                        except Exception as w_err:
+                            logger.error(f"Error processing weight for validation: {str(w_err)}")
+                        
+                    # If we have no valid weights, return without validation
+                    if not processed_weights:
+                        logger.error("No valid weights for model validation")
+                        return None
+                    
+                    # Check if processed weights match the model's expected weights
+                    model_weights = model.get_weights()
+                    
+                    # If weight count doesn't match, try creating a simpler model
+                    if len(processed_weights) != len(model_weights):
+                        logger.warning(f"Weight count mismatch for validation: model expects {len(model_weights)}, got {len(processed_weights)}")
+                        logger.warning("Creating simplified model for validation...")
+                        
+                        # Create a simple model that should work with most weights
+                        try:
+                            simple_model = tf.keras.Sequential([
+                                tf.keras.layers.Dense(128, activation='relu', input_shape=(784,)),
+                                tf.keras.layers.Dense(10, activation='softmax')
+                            ])
+                            simple_model.compile(
+                                optimizer='adam',
+                                loss='categorical_crossentropy',
+                                metrics=['accuracy']
+                            )
+                            
+                            # Check if simple model works with weights
+                            if len(processed_weights) == len(simple_model.get_weights()):
+                                logger.info("Using simplified model for validation")
+                                model = simple_model
+                                
+                                # Also need to reshape validation data for the simplified model
+                                if dataset_name in ['mnist', 'fashion_mnist']:
+                                    x_test = x_test.reshape(-1, 784)
+                                elif dataset_name == 'cifar10':
+                                    x_test = x_test.reshape(-1, 3072)
+                                    
+                                validation_data = (x_test, y_test)
+                            else:
+                                logger.error(f"Simplified model weight count ({len(simple_model.get_weights())}) still doesn't match weights ({len(processed_weights)})")
+                                return None
+                        except Exception as simple_err:
+                            logger.error(f"Error creating simplified model: {str(simple_err)}")
+                            return None
+                    
+                    # Apply processed weights to the model
+                    try:
+                        model.set_weights(processed_weights)
+                        logger.info(f"Successfully applied weights to model for validation")
+                    except Exception as weight_err:
+                        logger.error(f"Error applying processed weights for validation: {str(weight_err)}")
+                        
+                        # Last resort: Try to partially apply weights if possible
+                        try:
+                            logger.warning("Attempting partial weight application...")
+                            model_weights = model.get_weights()
+                            
+                            # Find weights that can be applied (matching shapes)
+                            for i, (model_w, proc_w) in enumerate(zip(model_weights, processed_weights[:len(model_weights)])):
+                                if model_w.shape == proc_w.shape:
+                                    model_weights[i] = proc_w
+                                    
+                            # Apply the partially updated weights
+                            model.set_weights(model_weights)
+                            logger.info("Applied partial weights for validation")
+                        except Exception as partial_err:
+                            logger.error(f"Partial weight application also failed: {str(partial_err)}")
+                            return None
+                    
+                    # Evaluate the model with error handling
+                    try:
+                        metrics = model.evaluate(validation_data[0], validation_data[1], verbose=0)
+                        
+                        # Construct metrics dictionary
+                        validation_metrics = {
+                            'loss': float(metrics[0]),
+                            'accuracy': float(metrics[1]),
+                            'val_loss': float(metrics[0]),  # Same as loss for validation set
+                            'val_accuracy': float(metrics[1])  # Same as accuracy for validation set
+                        }
+                        
+                        # Calculate more detailed metrics - precision, recall, f1, etc.
+                        try:
+                            # Get predictions
+                            y_pred = model.predict(validation_data[0], verbose=0)
+                            y_pred_classes = np.argmax(y_pred, axis=1)
+                            
+                            # For confusion matrix and classification report
+                            from sklearn.metrics import classification_report, confusion_matrix, precision_recall_fscore_support
+                            
+                            # Calculate precision, recall, f1
+                            if 'y_test_orig' in locals():
+                                precision, recall, f1, _ = precision_recall_fscore_support(
+                                    y_test_orig, y_pred_classes, average='weighted'
+                                )
+                                
+                                # Add to metrics
+                                validation_metrics['precision'] = float(precision)
+                                validation_metrics['recall'] = float(recall)
+                                validation_metrics['f1'] = float(f1)
+                                
+                                # Generate confusion matrix
+                                cm = confusion_matrix(y_test_orig, y_pred_classes)
+                                validation_metrics['confusion_matrix'] = cm.tolist()
+                                
+                                # Class-wise metrics
+                                class_report = classification_report(y_test_orig, y_pred_classes, output_dict=True)
+                                validation_metrics['class_report'] = class_report
+                            
+                            # Calculate AUC if binary classification
+                            if validation_data[1].shape[1] == 2:  # Binary classification
+                                from sklearn.metrics import roc_auc_score
+                                auc = roc_auc_score(validation_data[1][:, 1], y_pred[:, 1])
+                                validation_metrics['auc'] = float(auc)
+                        except Exception as detailed_err:
+                            logger.error(f"Error calculating detailed metrics: {str(detailed_err)}")
+                        
+                        # Store the aggregation method used
+                        validation_metrics['aggregation_method'] = 'PerfFedAvg'
+                        
+                        # Save these metrics for display in UI
+                        if project_id not in self.aggregated_metrics:
+                            self.aggregated_metrics[project_id] = {}
+                        
+                        # Update the metrics with validation results
+                        self.aggregated_metrics[project_id].update(validation_metrics)
+                        
+                        logger.info(f"Validated aggregated model for project {project_id}")
+                        logger.info(f"Validation loss: {validation_metrics['loss']:.4f}, validation accuracy: {validation_metrics['accuracy']:.4f}")
+                        if 'precision' in validation_metrics:
+                            logger.info(f"Precision: {validation_metrics['precision']:.4f}, Recall: {validation_metrics['recall']:.4f}, F1: {validation_metrics['f1']:.4f}")
+                        
+                        return validation_metrics
+                    except Exception as eval_err:
+                        logger.error(f"Error evaluating model: {str(eval_err)}")
+                        return None
+                        
+                except ImportError as imp_err:
+                    logger.error(f"Import error during model validation: {str(imp_err)}")
+                    return None
+                except Exception as e:
+                    logger.error(f"Error validating aggregated model: {str(e)}")
+                    return None
+                    
+            elif framework.startswith('pytorch') or framework == 'torch':
+                # Placeholder for PyTorch validation
+                logger.warning("PyTorch validation not implemented yet")
+                return None
+                
+            else:
+                logger.warning(f"Validation not implemented for framework: {framework}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error in validation: {str(e)}")
+            return None
 
 def start_federated_server(project):
     """

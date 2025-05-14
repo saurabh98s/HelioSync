@@ -63,6 +63,9 @@ def init_fl_server(app):
         app.fl_server = fl_server
         app.config['FL_SERVER'] = fl_server
         
+        # Also set FL_MANAGER for easier access from routes
+        app.config['FL_MANAGER'] = fl_server
+        
         app.logger.info("Federated Learning Server initialized successfully")
     except Exception as e:
         app.logger.error(f"Error initializing Federated Learning Server: {str(e)}")

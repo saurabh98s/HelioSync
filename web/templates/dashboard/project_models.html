@@ -133,13 +133,13 @@
                             <td>
                                 <div class="btn-group" role="group">
                                     <a href="{{ url_for('projects.download_model', project_id=project.id, model_id=model.id) }}" label='Download Model' class="btn btn-sm btn-outline-primary">
-                                        <i class="bi bi-download"></i>
+                                        <i class="bi bi-download">Download</i>
                                     </a>
                                     <form action="{{ url_for('projects.deploy_model', project_id=project.id, model_id=model.id) }}" method="POST" style="display: inline;">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="deploy_type" value="huggingface">
                                         <button type="submit" class="btn btn-sm btn-outline-success">
-                                            <i class="bi bi-cloud-upload"></i>
+                                            <i class="bi bi-cloud-upload">Deploy</i>
                                         </button>
                                     </form>
                                 </div>

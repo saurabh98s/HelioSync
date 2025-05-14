@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="api-key" content="{{ current_user.api_key if current_user.is_authenticated else '' }}">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    {% if current_user.is_authenticated and current_user.api_keys %}
+    <meta name="api-key" content="{{ current_user.api_keys[0].key }}">
+    {% endif %}
     <title>{% block title %}Federated Learning Platform{% endblock %}</title>
     
     <!-- Google Fonts - Roboto -->
