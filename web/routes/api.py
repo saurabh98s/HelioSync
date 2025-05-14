@@ -196,11 +196,14 @@ def get_client_tasks(client_id):
             # If project is completed, notify client
             if project.status == 'completed':
                 return jsonify({
-                    'status': 'waiting',
-                    'message': f'Project {project_id} is already completed',
+                    'status': 'completed',
+                    'message': f'Project {project_id} has been completed. Training cycle finished.',
                     'details': {
                         'project_id': project_id,
-                        'project_status': 'completed'
+                        'project_status': 'completed',
+                        'should_stop': True,
+                        'training_complete': True,
+                        'next_action': 'stop_training'
                     }
                 })
         else:
@@ -289,6 +292,24 @@ def get_client_tasks(client_id):
                 "message": "No suitable project found"
             }), 500
         
+        # Special handling for completed projects
+        if project.status == 'completed':
+            return jsonify({
+                "status": "completed",
+                "message": f"Project {project.name} has been completed. Training cycle finished.",
+                "details": {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "project_status": "completed",
+                    "current_round": project.current_round,
+                    "total_rounds": project.rounds,
+                    "should_stop": True,  # Explicit flag telling client to stop
+                    "training_complete": True,  # Additional flag to make the stop message even clearer
+                    "next_action": "stop_training"  # Direct instruction for the client
+                }
+            })
+
+        # Other non-running states
         if project.status != 'running':
             return jsonify({
                 "status": "waiting",
@@ -298,7 +319,8 @@ def get_client_tasks(client_id):
                     "project_name": project.name,
                     "project_status": project.status,
                     "current_round": project.current_round,
-                    "total_rounds": project.rounds
+                    "total_rounds": project.rounds,
+                    "should_wait": True  # Explicit flag telling client to wait
                 }
             })
         
@@ -361,163 +383,246 @@ def model_update(client_id):
         weights = data.get('weights', [])
         metrics = data.get('metrics', {})
         
+        # Validate that weights were provided
+        if not weights:
+            current_app.logger.error(f"Client {client_id} submitted empty weights")
+            return jsonify({
+                "success": False,
+                "message": "No weights provided in request",
+                "should_retry": True
+            }), 400
+        
+        # Check weight format and ensure they're valid arrays
+        valid_weights = True
+        weight_info = []
+        weight_shapes = []
+        
+        # Sample a few weights to validate format
+        for i, w in enumerate(weights[:5]):  # Log info for first few weights
+            try:
+                if isinstance(w, list):
+                    # Get shape information
+                    shape = [len(w)]
+                    if len(w) > 0 and isinstance(w[0], list):
+                        shape.append(len(w[0]))
+                        # Check for deeper nesting if needed
+                        if len(w[0]) > 0 and isinstance(w[0][0], list):
+                            shape.append(len(w[0][0]))
+                    
+                    # Check for empty arrays
+                    if len(w) == 0:
+                        weight_info.append(f"Empty list at index {i}")
+                        valid_weights = False
+                    else:
+                        dtype = type(w[0]).__name__ if len(w) > 0 else "unknown"
+                        weight_info.append(f"List shape:{shape}, dtype:{dtype}")
+                        weight_shapes.append(shape)
+                elif isinstance(w, dict):
+                    weight_info.append(f"Dict with keys: {list(w.keys())}")
+                    valid_weights = False
+                else:
+                    weight_info.append(f"Non-list type:{type(w).__name__}")
+                    valid_weights = False
+            except Exception as e:
+                weight_info.append(f"Error inspecting weight at index {i}: {str(e)}")
+                valid_weights = False
+        
+        if not valid_weights:
+            current_app.logger.error(f"Client {client_id} submitted invalid weight format: {weight_info}")
+            return jsonify({
+                "success": False,
+                "message": f"Invalid weight format: {', '.join(weight_info[:3])}",
+                "should_retry": True,
+                "details": {
+                    "weight_info": weight_info
+                }
+            }), 400
+            
         # Extract project_id from metrics if available, otherwise use the first active project
         project_id = metrics.get('project_id')
         
         # Check if this is the final update - this impacts many decisions below
         is_final = metrics.get('is_final', False)
+        current_round = metrics.get('round', 0)
         
-        # First step: Record that we received the update so client doesn't timeout
-        # This quick initial response prevents client timeouts
-        if weights and project_id:
-            # Start a background thread to process the update
-            def process_update_async():
+        # Try to get project if not specified in metrics
+        if not project_id:
+            # Try to find the project this client is currently working on
+            client_obj = Client.query.filter_by(client_id=client_id).first()
+            if client_obj:
+                # Look for active project assignments
+                project_client = ProjectClient.query.filter_by(
+                    client_id=client_obj.id, 
+                    status='active'
+                ).order_by(ProjectClient.last_update.desc()).first()
+                
+                if project_client:
+                    project_id = project_client.project_id
+                    current_app.logger.info(f"Found active project {project_id} for client {client_id}")
+                    
+                    # Update metrics with project_id
+                    metrics['project_id'] = project_id
+        
+        # Get the FL server and app context for the background thread
+        fl_server = current_app.fl_server
+        app = current_app._get_current_object()
+        
+        current_app.logger.info(f"Received model update from client {client_id} for project {project_id}, round {current_round}")
+        current_app.logger.info(f"Weight count: {len(weights)}, first few weights: {weight_info}")
+        
+        # For final updates, make sure we set the is_final flag in metrics
+        if is_final and 'is_final' not in metrics:
+            metrics['is_final'] = True
+            
+        # Process the update in a separate thread to avoid blocking the API
+        def process_model_update():
+            with app.app_context():
                 try:
-                    # All the processing code that was previously here
-                    process_model_update(client_id, project_id, weights, metrics, is_final)
+                    # Capture the project_id from the outer scope
+                    local_project_id = project_id
+                    
+                    # Validate the project exists and is active
+                    project = None
+                    
+                    if local_project_id:
+                        project = Project.query.get(local_project_id)
+                        
+                    if not project and fl_server:
+                        # Try to find from client assignments in FL server
+                        active_projects = fl_server.get_client_projects(client_id)
+                        if active_projects:
+                            local_project_id = active_projects[0]
+                            project = Project.query.get(local_project_id)
+                    
+                    if not project:
+                        current_app.logger.error(f"No project found for client {client_id}")
+                        return
+                    
+                    # If project is already completed, just log and exit thread - don't process update
+                    if project.status == 'completed':
+                        current_app.logger.info(f"Project {local_project_id} is already completed, ignoring update from client {client_id}")
+                        return
+                    
+                    # If project is not running, but this is a final update, we might still want to process it
+                    # to ensure proper project completion
+                    if project.status != 'running' and not is_final:
+                        current_app.logger.warning(f"Project {local_project_id} is not running (status: {project.status}), but processing update anyway")
+                    
+                    # Update the model with the client's weights
+                    result = fl_server.update_model(client_id, weights, metrics, project_id=project.id)
+                    
+                    if result and result.get('aggregated', False):
+                        # The model was aggregated - potentially save it
+                        current_app.logger.info(f"Model aggregated for project {project.id}, round {project.current_round}")
+                        
+                        # Check if we need to save this model
+                        should_save = False
+                        is_final_round = False
+                        round_completed = result.get('round_completed', False)
+                        
+                        # Single-round projects should save and complete after first round
+                        if project.rounds == 1 and round_completed:
+                            current_app.logger.info(f"Single-round project {project.id} completed")
+                            should_save = True
+                            is_final_round = True
+                        
+                        # Multi-round projects save after each round and mark as final at end
+                        elif project.rounds > 1:
+                            if round_completed:
+                                current_app.logger.info(f"Round {project.current_round} completed for project {project.id}")
+                                should_save = True
+                                
+                                # Check if this was the final round
+                                if project.current_round >= project.rounds:
+                                    current_app.logger.info(f"Final round {project.current_round} completed for project {project.id}")
+                                    is_final_round = True
+                        
+                        # Save the model if needed
+                        if should_save:
+                            current_app.logger.info(f"Saving model for project {project.id}, round {project.current_round}, is_final={is_final_round}")
+                            model = fl_server.save_model(project.id, project.current_round, is_final=is_final_round)
+                            
+                            if model:
+                                current_app.logger.info(f"Model saved successfully: {model.id}")
+                                
+                                # Check if we need to update the project round
+                                if round_completed and not is_final_round:
+                                    project.current_round += 1
+                                    db.session.commit()
+                                    current_app.logger.info(f"Project {project.id} advanced to round {project.current_round}")
+                            else:
+                                current_app.logger.error(f"Failed to save model for project {project.id}")
+                        
+                        # If final round, update project status
+                        if is_final_round or is_final:
+                            project.status = 'completed'
+                            db.session.commit()
+                            current_app.logger.info(f"Project {project.id} marked as completed")
+                    
                 except Exception as e:
-                    logging.error(f"Async model update processing error: {str(e)}")
-                    logging.error(traceback.format_exc())
-            
-            # Start background thread
-            import threading
-            update_thread = threading.Thread(target=process_update_async)
-            update_thread.daemon = True
-            update_thread.start()
-            
-            # Return success immediately while processing continues in background
-            return jsonify({
-                'status': 'success',
-                'message': 'Model update received and processing started',
-                'details': {
-                    'project_id': project_id,
-                    'is_final_update': is_final,
-                    'background_processing': True
-                }
-            })
+                    current_app.logger.error(f"Error processing model update: {str(e)}")
+                    import traceback
+                    current_app.logger.error(traceback.format_exc())
         
-        # Get the client
-        client = Client.query.filter_by(client_id=client_id).first()
-        if not client:
-            # Normal handling for client not found...
-            return jsonify({'status': 'error', 'message': 'Client not found'}), 404
+        # Start the processing thread
+        import threading
+        thread = threading.Thread(target=process_model_update)
+        thread.daemon = True
+        thread.start()
         
-        # Always update client last seen time
-        if client:
-            client.last_seen = datetime.utcnow()
-            db.session.commit()
+        # Get project status to add to response
+        project_status = None
+        current_project_round = None
+        total_rounds = None
         
-        # Just return success if we have nothing to process
-        return jsonify({
-            'status': 'success',
-            'message': 'Model update received (no weights or project_id)'
-        })
+        if project_id:
+            project = Project.query.get(project_id)
+            if project:
+                project_status = project.status
+                current_project_round = project.current_round
+                total_rounds = project.rounds
+        
+        # Return success immediately while processing happens in the background
+        response = {
+            "success": True, 
+            "message": "Update received and being processed",
+            "project_id": project_id,
+            "round": current_round
+        }
+        
+        # Add project status information if available
+        if project_status:
+            response["project_status"] = project_status
+            response["current_round"] = current_project_round
+            response["total_rounds"] = total_rounds
             
+            # Calculate if client should stop training
+            should_stop = (
+                project_status == 'completed' or
+                is_final or  # Always stop if client sent final flag
+                (current_project_round >= total_rounds) or  # Stop if we've reached the total rounds
+                (total_rounds == 1 and len(weights) > 0)  # For single-round projects, stop after first submission
+            )
+            
+            response["should_stop"] = should_stop
+            
+            if should_stop:
+                response["message"] = "Training complete. Thank you for your contribution!"
+                response["status"] = "completed"  # Explicit status to help client decide to stop
+                response["training_complete"] = True  # Extra flag to make it super clear
+                response["next_action"] = "stop_training"  # Explicit instruction for the client
+        
+        return jsonify(response)
+    
     except Exception as e:
-        logging.error(f"Error in model_update: {str(e)}")
-        logging.error(traceback.format_exc())
+        current_app.logger.error(f"Error handling model update: {str(e)}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
         return jsonify({
-            'status': 'error',
-            'message': f'Internal server error: {str(e)}'
+            "success": False,
+            "message": f"Server error: {str(e)}",
+            "should_retry": True
         }), 500
-
-def process_model_update(client_id, project_id, weights, metrics, is_final):
-    """Background processing function for model updates."""
-    # All the update processing code from the original model_update function
-    try:
-        # Get the client
-        client = Client.query.filter_by(client_id=client_id).first()
-        if not client:
-            logging.error(f"Client {client_id} not found in background update")
-            return
-        
-        # Always update client last seen time
-        client.last_seen = datetime.utcnow()
-        db.session.commit()
-        
-        # Find the project
-        project = Project.query.get(project_id)
-        if not project:
-            logging.error(f"Project {project_id} not found in background update")
-            return
-        
-        # Update model weights in FL server
-        server = current_app.fl_server
-        if not server:
-            logging.error("FL server not available in background update")
-            return
-        
-        # Log the final update status
-        if is_final:
-            logging.info(f"Processing FINAL update from client {client_id} for project {project_id}")
-            
-            # Determine if this is actually the final round
-            is_final_round = project.current_round >= (project.rounds - 1)
-            
-            # Only mark as final in the server if we're actually in the final round
-            if is_final_round:
-                logging.info(f"Confirming this is the final round ({project.current_round}/{project.rounds})")
-            else:
-                logging.warning(f"Client sent final flag but project is only at round {project.current_round}/{project.rounds}")
-                # Override is_final flag if we're not actually in the final round
-                is_final = False
-        
-        # Update the model with the client's weights
-        success = server.update_model(client_id, weights, metrics, project_id)
-        
-        if success:
-            # Get latest project status after update
-            db.session.refresh(project)
-            
-            # Update client-project association to track participation
-            client_project = ProjectClient.query.filter_by(
-                client_id=client.id, project_id=project.id
-            ).first()
-            
-            if client_project:
-                client_project.last_update = datetime.utcnow()
-                client_project.training_samples = metrics.get('samples', 0)
-                client_project.status = 'completed' if is_final else 'training'
-                
-                # Store metrics as JSON
-                if not client_project.metrics:
-                    client_project.metrics = {}
-                
-                # Update metrics with latest round
-                round_metrics = {
-                    'round': project.current_round,
-                    'loss': metrics.get('loss', 0),
-                    'accuracy': metrics.get('accuracy', 0),
-                    'val_loss': metrics.get('val_loss', 0),
-                    'val_accuracy': metrics.get('val_accuracy', 0)
-                }
-                
-                # Add to metrics history
-                metrics_dict = dict(client_project.metrics)  # Convert from JSON
-                if 'rounds' not in metrics_dict:
-                    metrics_dict['rounds'] = []
-                metrics_dict['rounds'].append(round_metrics)
-                client_project.metrics = metrics_dict
-                
-                db.session.commit()
-            
-            # For final updates, make sure the project is marked as completed
-            if is_final and project.status != 'completed':
-                # Ensure project has actually progressed through enough rounds
-                if project.current_round >= (project.rounds - 1):
-                    logging.info(f"Marking project {project_id} as completed for final update")
-                    project.status = 'completed'
-                    db.session.commit()
-                else:
-                    logging.warning(f"Not marking project as completed: only at round {project.current_round} of {project.rounds}")
-            
-            logging.info(f"Successfully processed model update for client {client_id}, project {project_id}")
-        else:
-            logging.error(f"Failed to process model update for client {client_id}, project {project_id}")
-        
-    except Exception as e:
-        logging.error(f"Error in background model update: {str(e)}")
-        logging.error(traceback.format_exc())
 
 @api_bp.route('/clients/<client_id>/heartbeat', methods=['POST'])
 @require_api_key

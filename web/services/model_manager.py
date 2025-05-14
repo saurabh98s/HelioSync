@@ -15,6 +15,7 @@ from flask import current_app
 import numpy as np
 import sys
 import time
+import uuid
 
 from web.app import db
 from web.models import Model, Project, User
@@ -609,6 +610,14 @@ This model was trained using Federated Learning with {model.metrics.get('clients
                     # Log files to be uploaded
                     logger.info(f"Files to upload: {os.listdir(tmp_dir)}")
                     
+                    # Add a timestamp file to ensure each upload is seen as different
+                    timestamp = datetime.utcnow().isoformat()
+                    with open(os.path.join(tmp_dir, 'upload_timestamp.txt'), 'w') as f:
+                        f.write(f"Upload timestamp: {timestamp}\n")
+                        f.write(f"Random ID: {uuid.uuid4()}\n")
+                        f.write(f"Model ID: {model.id}\n")
+                        f.write(f"Version: {model.version}\n")
+                    
                     # Initialize Hugging Face API
                     api = HfApi(token=hf_token)
                     
@@ -626,15 +635,19 @@ This model was trained using Federated Learning with {model.metrics.get('clients
                                 "error": f"The repository {model_name} does not exist. Please create it first on Hugging Face."
                             }
                         
+                        # Make folder name unique with timestamp
+                        unique_folder_name = f"{folder_name}_{int(time.time())}"
+                        
                         # Upload files to a specific path within the repository to organize models
-                        logger.info(f"Uploading files to Hugging Face Hub under {folder_name}/")
+                        logger.info(f"Uploading files to Hugging Face Hub under {unique_folder_name}/")
                         api.upload_folder(
                             folder_path=tmp_dir,
                             repo_id=model_name,
                             repo_type="model",
-                            path_in_repo=folder_name,  # Place files in a subfolder for organization
+                            path_in_repo=unique_folder_name,  # Place files in a subfolder for organization
+                            commit_message=f"Upload model {model.id} version {model.version} at {timestamp}"
                         )
-                        logger.info(f"Files uploaded successfully to {model_name}/{folder_name}")
+                        logger.info(f"Files uploaded successfully to {model_name}/{unique_folder_name}")
                     except Exception as repo_error:
                         error_msg = f"Error with repository operations: {str(repo_error)}"
                         logger.error(error_msg)
@@ -658,8 +671,8 @@ This model was trained using Federated Learning with {model.metrics.get('clients
                 "timestamp": datetime.utcnow().isoformat(),
                 "status": "deployed",
                 "model_name": model_name,
-                "folder_name": folder_name,
-                "huggingface_url": f"https://huggingface.co/{model_name}/tree/main/{folder_name}"
+                "folder_name": unique_folder_name,
+                "huggingface_url": f"https://huggingface.co/{model_name}/tree/main/{unique_folder_name}"
             }
             
             # Update model in database

@@ -168,23 +168,20 @@ class FederatedClient:
         return False
     
     def _start_heartbeat(self):
-        """Start sending heartbeat to server."""
-        def heartbeat():
-            while self.is_training:
-                try:
-                    response = requests.post(
-                        f"{self.server_url}/api/clients/{self.client_id}/heartbeat",
-                        headers={'X-API-Key': self.api_key},
-                        timeout=10  # Add timeout to prevent hanging
-                    )
-                    response.raise_for_status()
-                except Exception as e:
-                    # Don't log every heartbeat error to avoid console spam
-                    pass
-                time.sleep(30)  # Send heartbeat every 30 seconds
-        
-        self.heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+        """Start a background thread for sending periodic heartbeats."""
+        self.heartbeat_thread = threading.Thread(target=self._heartbeat_worker)
+        self.heartbeat_thread.daemon = True
         self.heartbeat_thread.start()
+    
+    def _heartbeat_worker(self):
+        """Worker thread for sending heartbeats."""
+        while self.is_training:
+            try:
+                self._send_heartbeat()
+            except Exception as e:
+                print(f"Heartbeat error: {e}")
+            
+            time.sleep(5)  # Send heartbeat more frequently (changed from 30)
     
     def _retry_request(self, request_fn, max_retries=None, is_final=False):
         """Retry a request with exponential backoff."""
@@ -242,7 +239,7 @@ class FederatedClient:
         
         # Backoff strategy for "no projects" state
         no_projects_count = 0
-        no_projects_max_backoff = 60  # Maximum seconds to wait between polls when no projects
+        no_projects_max_backoff = 0  # No backoff - poll continuously (changed from 60)
         
         while self.is_training:
             try:
@@ -250,10 +247,7 @@ class FederatedClient:
                 use_short_timeout = True
                 timeout = 15
                 
-                # Adapt timeout based on no_projects_count
-                if no_projects_count > 5:
-                    # After 5 consecutive "no projects" responses, use longer timeouts
-                    timeout = min(10 + (no_projects_count * 2), 45)  # Gradually increase up to 45 sec
+                # Removed adaptive timeout based on no_projects_count
                 
                 # Define the request function
                 def get_tasks():
@@ -261,7 +255,7 @@ class FederatedClient:
                         f"{self.server_url}/api/clients/{self.client_id}/tasks",
                         headers={'X-API-Key': self.api_key},
                         params={'short_timeout': use_short_timeout},  # Use short timeout version 
-                        timeout=timeout  # Adaptive timeout
+                        timeout=timeout  # Fixed timeout
                     )
                 
                 # Use retry mechanism
@@ -273,8 +267,8 @@ class FederatedClient:
                     # Check if we're waiting for projects
                     if data.get('status') == 'waiting' and 'No active projects' in data.get('message', ''):
                         no_projects_count += 1
-                        wait_time = min(5 * (1.5 ** min(no_projects_count, 6)), no_projects_max_backoff)
-                        print(f"No active projects available. Waiting {wait_time:.1f} seconds before checking again. (Poll #{no_projects_count})")
+                        wait_time = 0.1  # Minimal wait time for polling (almost continuously)
+                        print(f"No active projects available. Checking again immediately. (Poll #{no_projects_count})")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -306,7 +300,7 @@ class FederatedClient:
                                 print("Haven't sent final update yet. Proceeding with training one more time.")
                             else:
                                 # We've already sent our final update or aren't in the final round, so we can stop
-                                time.sleep(10)  # Wait before checking again
+                                time.sleep(1)  # Shorter wait time (changed from 10)
                                 continue  # Skip to next iteration instead of breaking
                         
                         # If the response indicated weights are available but didn't include them (short_timeout mode)
@@ -328,11 +322,11 @@ class FederatedClient:
                                 weights = full_data.get('details', {}).get('weights', [])
                                 if not weights:
                                     print("Failed to get weights in second request. Waiting before retrying...")
-                                    time.sleep(15)
+                                    time.sleep(1)  # Shorter wait time (changed from 15)
                                     continue
                             else:
                                 print("Failed to get full weights. Waiting before retrying...")
-                                time.sleep(15)
+                                time.sleep(1)  # Shorter wait time (changed from 15)
                                 continue
                         
                         # Get model weights and update local model
@@ -474,16 +468,20 @@ class FederatedClient:
                                             self.final_update_sent = True
                                             print("Final update successfully sent and processed by server!")
                                             
-                                        # Check if project is completed
-                                        if 'project_status' in response_data.get('details', {}) and response_data['details']['project_status'] == 'completed':
-                                            print(f"Project is now marked as completed on the server.")
+                                        # Check if project is completed either directly or from the response
+                                        project_completed = False
+                                        if 'details' in response_data and 'project_status' in response_data['details']:
+                                            project_status = response_data['details']['project_status']
+                                            project_completed = project_status == 'completed'
+                                            if project_completed:
+                                                print(f"Project is now marked as completed on the server.")
+                                                
+                                        # For single-round projects or if explicitly completed, stop training
+                                        if project_completed or is_final_round or self.final_update_sent:
+                                            print("Training cycle complete. Exiting training loop.")
+                                            break
                                             
-                                            # If we successfully sent the final update, we can break
-                                            if self.final_update_sent:
-                                                print("Training cycle complete. Exiting training loop.")
-                                                break
-                                        else:
-                                            print("Training completed and update sent to server")
+                                        print("Training completed and update sent to server")
                                     else:
                                         print(f"Server response: {response_data.get('message', 'Unknown response')}")
                                 else:
@@ -530,11 +528,16 @@ class FederatedClient:
                                 print("Weight mismatch. This might be due to incompatible model architectures.")
                         else:
                             print("No weights received in task. Waiting before trying again...")
-                            time.sleep(15)
+                            time.sleep(1)  # Shorter wait time (changed from 15)
                     elif data.get('status') == 'waiting':
                         print(f"Waiting: {data.get('message', 'No active projects')}")
-                        # Sleep longer when waiting for projects
-                        time.sleep(10)
+                        # Poll continuously with minimal delay
+                        time.sleep(0.1)
+                    elif data.get('status') == 'completed':
+                        print(f"Project completed: {data.get('message', 'Training finished')}")
+                        # The project is complete, break out of the training loop
+                        print("Server indicates project is complete. Stopping training loop.")
+                        break
                     else:
                         print(f"Server response: {data.get('message', 'Unknown response')}")
                 else:
@@ -545,23 +548,37 @@ class FederatedClient:
                     
                     print(f"{error_msg} after multiple retries.")
                     
-                    # Increment failure counter and wait with exponential backoff
+                    # Increment failure counter but use minimal backoff
                     consecutive_failures += 1
-                    wait_time = min(10 * 1.5 ** min(consecutive_failures, 8), 180)  # Cap at 3 minutes
+                    wait_time = 1.0  # Fixed short wait time regardless of failures
                     
-                    print(f"Waiting {wait_time:.1f} seconds before retry ({consecutive_failures} consecutive failures)")
+                    print(f"Retrying immediately after failure ({consecutive_failures} consecutive failures)")
                     time.sleep(wait_time)
             except Exception as e:
                 print(f"Error in training loop: {str(e)}")
                 traceback.print_exc()
                 
-                # Safety wait after unexpected error
-                time.sleep(30)
+                # Shorter safety wait after unexpected error
+                time.sleep(5)
             
-            # Small delay between iterations
-            time.sleep(2)
+            # Minimal delay between iterations
+            time.sleep(0.1)
         
         print("Training loop exited.")
+
+    def _send_heartbeat(self):
+        """Send a heartbeat to the server to indicate the client is still active."""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/clients/{self.client_id}/heartbeat",
+                headers={'X-API-Key': self.api_key},
+                timeout=5  # Short timeout
+            )
+            response.raise_for_status()
+            return True
+        except Exception:
+            # Silently fail - heartbeat errors are not critical
+            return False
 
 class MetricCallback(tf.keras.callbacks.Callback):
     def __init__(self, client):

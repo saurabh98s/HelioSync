@@ -145,7 +145,7 @@ class FederatedClient:
                     logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Heartbeat sent")
                 else:
                     logger.warning("Failed to send heartbeat")
-            time.sleep(30)  # Send heartbeat every 30 seconds
+            time.sleep(5)  # Send heartbeat more frequently (changed from 30 seconds)
     
     def check_for_tasks(self):
         """
@@ -165,6 +165,13 @@ class FederatedClient:
             
             if response.status_code == 200:
                 data = response.json()
+                
+                # Check for completed project status
+                if data.get('status') == 'completed':
+                    logger.info(f"Project completed: {data.get('message', 'Training finished')}")
+                    logger.info("Server indicates project is complete. No further training needed.")
+                    return True  # Return true to indicate we processed something, but don't set current_task
+                
                 if data.get('has_task', False):
                     task = data.get('task', {})
                     self.current_task = task
@@ -293,7 +300,7 @@ class FederatedClient:
             while self.running:
                 if self.connected:
                     self.check_for_tasks()
-                time.sleep(10)  # Check for tasks every 10 seconds
+                time.sleep(0.1)  # Check for tasks continuously (changed from 10 seconds)
                 
         except KeyboardInterrupt:
             logger.info("Client interrupted by user")

@@ -118,12 +118,6 @@ def start(project_id):
             flash('Federated learning server is not initialized.', 'error')
             return redirect(url_for('projects.view', project_id=project_id))
         
-        # Initialize the project in the FL server
-        success = fl_server.initialize_project(project)
-        if not success:
-            flash('Failed to initialize project.', 'error')
-            return redirect(url_for('projects.view', project_id=project_id))
-        
         # Register all assigned clients with the FL server
         assigned_clients_count = 0
         for project_client in project.project_clients:
@@ -154,16 +148,23 @@ def start(project_id):
         if assigned_clients_count < project.min_clients:
             flash(f'Warning: Only {assigned_clients_count} active clients found, but project requires {project.min_clients}. Training may not start.', 'warning')
         
-        # Start the federated server
+        # Initialize the project in the FL server to create initial weights
+        # This ensures weights are available immediately when clients poll
+        success = fl_server.initialize_project(project)
+        if not success:
+            flash('Failed to initialize project in FL server.', 'error')
+            return redirect(url_for('projects.view', project_id=project_id))
+            
+        # Update project status before starting server
+        project.status = 'running'
+        project.current_round = 0
+        db.session.commit()
+        
+        # Start the federated server in a separate thread
         success = start_federated_server(project)
         if not success:
             flash('Failed to start federated server.', 'error')
             return redirect(url_for('projects.view', project_id=project_id))
-        
-        # Update project status
-        project.status = 'running'
-        project.current_round = 0
-        db.session.commit()
         
         flash('Project started successfully.', 'success')
         
